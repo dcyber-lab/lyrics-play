@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { lib, load } from './lib/store.svelte.js';
   import { wakeLock } from './lib/wakelock.svelte.js';
+  import { leavePlayer } from './lib/session.svelte.js';
   import Home from './components/Home.svelte';
   import PlaylistView from './components/PlaylistView.svelte';
   import Player from './components/Player.svelte';
@@ -27,7 +28,10 @@
 
   $effect(() => {
     if (route.name === 'play') wakeLock.enable();
-    else wakeLock.disable();
+    else {
+      wakeLock.disable();
+      leavePlayer();
+    }
   });
 </script>
 
