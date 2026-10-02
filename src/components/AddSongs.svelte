@@ -1,6 +1,7 @@
 <script>
   import { addSong } from '../lib/store.svelte.js';
   import { searchLyrics, setlistLineToQuery } from '../lib/lrclib.js';
+  import { importTracks } from '../lib/importer.js';
   import { parseLrc } from '../lib/lrc.js';
 
   let { pid } = $props();
@@ -46,16 +47,9 @@
     const lines = setlist.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
     if (!lines.length) return;
     batch = { done: 0, total: lines.length, failed: [] };
-    for (const line of lines) {
-      try {
-        const [best] = await searchLyrics(setlistLineToQuery(line, artist.trim()));
-        if (best) addSong(pid, best);
-        else batch.failed.push(line);
-      } catch {
-        batch.failed.push(line);
-      }
-      batch.done++;
-    }
+    const tracks = lines.map((line) => ({ line, query: setlistLineToQuery(line, artist.trim()) }));
+    const failed = await importTracks(pid, tracks, (done) => (batch.done = done));
+    batch.failed = failed.map((t) => t.line);
     setlist = batch.failed.join('\n');
   }
 

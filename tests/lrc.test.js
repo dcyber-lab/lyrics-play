@@ -39,3 +39,32 @@ describe('estimateTimeline', () => {
     expect(tl.lines).toHaveLength(2);
   });
 });
+
+import { cleanTitle, pickBest, setlistLineToQuery } from '../src/lib/lrclib.js';
+
+describe('lrclib helpers', () => {
+  it('strips featured artists and version suffixes', () => {
+    expect(cleanTitle('Timeless (feat Playboi Carti)')).toBe('Timeless');
+    expect(cleanTitle("Creepin' (with The Weeknd & 21 Savage)")).toBe("Creepin'");
+    expect(cleanTitle('The Abyss (feat. Lana Del Rey)')).toBe('The Abyss');
+    expect(cleanTitle('Blinding Lights - Remastered 2020')).toBe('Blinding Lights');
+    expect(cleanTitle('How Do I Make You Love Me?')).toBe('How Do I Make You Love Me?');
+    expect(cleanTitle('House Of Balloons / Glass Table Girls')).toBe('House Of Balloons / Glass Table Girls');
+  });
+
+  it('prefers synced, then closest duration', () => {
+    const rs = [
+      { id: 'plain', synced: false, duration: 200 },
+      { id: 'extended', synced: true, duration: 380 },
+      { id: 'album', synced: true, duration: 201 },
+    ];
+    expect(pickBest(rs, 200).id).toBe('album');
+    expect(pickBest(rs).id).toBe('extended');
+    expect(pickBest([], 200)).toBe(null);
+  });
+
+  it('turns setlist lines into queries', () => {
+    expect(setlistLineToQuery('3. The Weeknd - Starboy')).toBe('The Weeknd Starboy');
+    expect(setlistLineToQuery('Starboy', 'The Weeknd')).toBe('The Weeknd Starboy');
+  });
+});

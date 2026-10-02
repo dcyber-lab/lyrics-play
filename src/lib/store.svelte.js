@@ -30,8 +30,8 @@ export function playlistById(id) {
   return lib.playlists.find((p) => p.id === id);
 }
 
-export function createPlaylist(name) {
-  const p = { id: uid(), name: name.trim() || '新歌单', songIds: [] };
+export function createPlaylist(name, extra = {}) {
+  const p = { id: uid(), name: name.trim() || '新歌单', songIds: [], ...extra };
   lib.playlists.push(p);
   save();
   return p.id;
