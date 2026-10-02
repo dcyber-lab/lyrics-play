@@ -128,3 +128,14 @@ describe('artwork helpers', () => {
     expect(pickDeezer(rs, { artist: 'The Weeknd', duration: 230 }).id).toBe('album');
   });
 });
+
+import { describeSettings } from '../src/lib/session.svelte.js';
+
+describe('describeSettings', () => {
+  it('labels camera modes, portrait or landscape', () => {
+    expect(describeSettings({ width: 1920, height: 1080, frameRate: 60 })).toBe('1080p · 60fps');
+    expect(describeSettings({ width: 1080, height: 1920, frameRate: 29.97 })).toBe('1080p · 30fps');
+    expect(describeSettings({ width: 1280, height: 720 })).toBe('720p');
+    expect(describeSettings({})).toBe('');
+  });
+});

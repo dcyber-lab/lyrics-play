@@ -1,3 +1,10 @@
+/* Lets the per-word karaoke fill animate smoothly between clock ticks. */
+@property --w {
+  syntax: '<number>';
+  inherits: true;
+  initial-value: 0;
+}
+
 :root {
   --bg: #07070a;
   --surface: rgba(255, 255, 255, 0.055);
