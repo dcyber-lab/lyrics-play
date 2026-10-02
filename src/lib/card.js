@@ -33,27 +33,30 @@ function drawCover(ctx, img, x, y, w, h, fy = 0.5) {
   ctx.drawImage(img, (img.width - sw) / 2, (img.height - sh) * fy, sw, sh, x, y, w, h);
 }
 
-// The user's own photo in a tilted instant-film frame, captioned.
+// The user's own photo as a small tilted instant-film print, tucked into
+// the lower right where the artist photo has already faded out, so it never
+// covers the artist or the album covers.
+const PHOTO = { cx: 808, cy: 1010, w: 400, rot: 5 };
 function drawPolaroid(ctx, img, fy, caption) {
-  const pw = 600;
-  const pad = 28;
+  const pw = PHOTO.w;
+  const pad = 22;
   const inner = pw - pad * 2;
-  const ph = pad + inner + 104;
+  const ph = pad + inner + 78;
   ctx.save();
-  ctx.translate(CARD_W / 2, 150 + ph / 2);
-  ctx.rotate((-3.5 * Math.PI) / 180);
-  ctx.shadowColor = 'rgba(0,0,0,0.55)';
-  ctx.shadowBlur = 50;
-  ctx.shadowOffsetY = 24;
+  ctx.translate(PHOTO.cx, PHOTO.cy);
+  ctx.rotate((PHOTO.rot * Math.PI) / 180);
+  ctx.shadowColor = 'rgba(0,0,0,0.6)';
+  ctx.shadowBlur = 44;
+  ctx.shadowOffsetY = 20;
   ctx.fillStyle = '#f6f4ef';
   ctx.fillRect(-pw / 2, -ph / 2, pw, ph);
   ctx.shadowColor = 'transparent';
   drawCover(ctx, img, -pw / 2 + pad, -ph / 2 + pad, inner, inner, fy);
   if (caption) {
     ctx.fillStyle = '#3b3a38';
-    ctx.font = `600 36px ${FONT}`;
+    ctx.font = `600 28px ${FONT}`;
     ctx.textAlign = 'center';
-    ctx.fillText(ellipsize(ctx, caption, inner), 0, ph / 2 - 40);
+    ctx.fillText(ellipsize(ctx, caption, inner), 0, ph / 2 - 30);
     ctx.textAlign = 'left';
   }
   ctx.restore();
@@ -74,15 +77,51 @@ function hueTile(ctx, hue, x, y, w, h) {
   ctx.fillRect(x, y, w, h);
 }
 
+// Album covers tiled across the hero: 3×3 with nine or more, else 2×2.
+function drawMosaic(ctx, imgs, urls, seed) {
+  const cols = urls.length >= 9 ? 3 : 2;
+  const tile = CARD_W / cols;
+  for (let i = 0; i < cols * cols; i++) {
+    const x = (i % cols) * tile;
+    const y = Math.floor(i / cols) * tile;
+    const img = imgs[i % imgs.length];
+    if (img) drawCover(ctx, img, x, y, tile, tile);
+    else hueTile(ctx, hueOf(`${seed}${i}`), x, y, tile, tile);
+  }
+}
+
+// Wrap into at most `max` lines. Prefer breaking at " · " separators (and
+// drop the dot there, "Arena · 上海" -> "Arena" / "上海"), then at spaces.
+function wrapLines(ctx, text, width, max) {
+  const fits = (t) => ctx.measureText(t).width <= width;
+  const pack = (tokens, sep) => {
+    const out = [];
+    let cur = '';
+    for (const t of tokens) {
+      const next = cur ? `${cur}${sep}${t}` : t;
+      if (!cur || fits(next)) cur = next;
+      else {
+        out.push(cur);
+        cur = t;
+      }
+    }
+    if (cur) out.push(cur);
+    return out;
+  };
+  const lines = pack(text.split(/\s*·\s*/), ' · ').flatMap((l) => (fits(l) ? [l] : pack(l.split(/\s+/), ' ')));
+  if (lines.length > max) lines.splice(max - 1, lines.length, lines.slice(max - 1).join(' '));
+  return lines.map((l) => ellipsize(ctx, l, width));
+}
+
 const hueOf = (str = '') => [...str].reduce((h, c) => (h * 31 + c.codePointAt(0)) >>> 0, 0) % 360;
 
 /**
  * @param {HTMLCanvasElement} canvas
  * @param {{ title: string, eyebrow: string, subtitle?: string, hero?: string,
- *           photo?: string, photoStyle?: 'hero' | 'polaroid', photoY?: number, caption?: string,
+ *           heroMosaic?: string[], photo?: string, photoY?: number, caption?: string,
  *           songs: { title: string, artist?: string, cover?: string }[] }} card
- *   photo: the user's own picture (a local blob URL), shown full-bleed as the
- *   hero or in a polaroid frame over the artist photo.
+ *   photo: the user's own picture (a local blob URL), shown as a small print
+ *   in the lower right; the artist photo and covers stay fully visible.
  */
 export async function renderCard(canvas, card) {
   canvas.width = CARD_W;
@@ -91,9 +130,11 @@ export async function renderCard(canvas, card) {
   const songs = card.songs;
   const single = songs.length <= 12;
 
-  const [hero, photo, ...covers] = await Promise.all([
+  const mosaicUrls = card.heroMosaic ?? [];
+  const [hero, photo, mosaic, ...covers] = await Promise.all([
     loadImage(card.hero),
     loadImage(card.photo),
+    Promise.all(mosaicUrls.map((u) => loadImage(u))),
     ...(single ? songs.map((s) => loadImage(s.cover)) : []),
   ]);
 
@@ -101,9 +142,9 @@ export async function renderCard(canvas, card) {
   ctx.fillStyle = '#07070a';
   ctx.fillRect(0, 0, CARD_W, CARD_H);
   const HERO_H = 1180;
-  const fullPhoto = photo && card.photoStyle !== 'polaroid';
-  if (fullPhoto) drawCover(ctx, photo, 0, 0, CARD_W, HERO_H, card.photoY ?? 0.5);
-  else if (hero) drawCover(ctx, hero, 0, 0, CARD_W, HERO_H);
+  if (mosaicUrls.length) drawMosaic(ctx, mosaic, mosaicUrls, card.title);
+  // faces sit in the upper part of artist photos; bias the crop upward
+  else if (hero) drawCover(ctx, hero, 0, 0, CARD_W, HERO_H, 0.3);
   else {
     const h = hueOf(card.title);
     const g = ctx.createRadialGradient(280, 300, 50, 400, 500, 1100);
@@ -125,10 +166,10 @@ export async function renderCard(canvas, card) {
   ctx.fillStyle = top;
   ctx.fillRect(0, 0, CARD_W, 220);
 
-  if (photo && card.photoStyle === 'polaroid') drawPolaroid(ctx, photo, card.photoY ?? 0.5, card.caption);
-
   const L = 72;
-  const MAXW = CARD_W - L * 2;
+  const FULLW = CARD_W - L * 2;
+  // with a photo the title block keeps to the left of the print
+  const MAXW = photo ? PHOTO.cx - PHOTO.w / 2 - 40 - L : FULLW;
 
   // title block
   ctx.textBaseline = 'alphabetic';
@@ -150,12 +191,14 @@ export async function renderCard(canvas, card) {
   if (card.subtitle) {
     ctx.font = `600 40px ${FONT}`;
     ctx.fillStyle = 'rgba(255,255,255,0.72)';
-    y += 64;
-    ctx.fillText(ellipsize(ctx, card.subtitle, MAXW), L, y);
+    for (const line of wrapLines(ctx, card.subtitle, MAXW, photo ? 2 : 1)) {
+      y += 58;
+      ctx.fillText(line, L, y);
+    }
   }
 
   // setlist
-  const listTop = Math.max(y + 70, 1170);
+  const listTop = Math.max(y + 70, photo ? 1290 : 1170);
   const listBottom = 1790;
   const avail = listBottom - listTop;
   ctx.strokeStyle = 'rgba(255,255,255,0.12)';
@@ -193,7 +236,7 @@ export async function renderCard(canvas, card) {
     const rows = Math.ceil(songs.length / 2);
     const rowH = avail / rows;
     const fs = Math.max(18, Math.min(34, Math.round(rowH * 0.62)));
-    const colW = (MAXW - 40) / 2;
+    const colW = (FULLW - 40) / 2;
     songs.forEach((s, i) => {
       const col = i < rows ? 0 : 1;
       const row = col ? i - rows : i;
@@ -209,6 +252,8 @@ export async function renderCard(canvas, card) {
       ctx.fillText(ellipsize(ctx, s.title, colW - (nx - x)), nx, ry);
     });
   }
+
+  if (photo) drawPolaroid(ctx, photo, card.photoY ?? 0.5, card.caption);
 
   // footer
   ctx.font = `800 26px ${FONT}`;
