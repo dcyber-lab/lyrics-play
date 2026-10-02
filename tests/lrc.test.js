@@ -83,3 +83,23 @@ describe('queriesFor', () => {
     expect(queriesFor({ query: 'raw text' })).toEqual(['raw text']);
   });
 });
+
+import { rankResults } from '../src/lib/lrclib.js';
+
+describe('rankResults', () => {
+  it('orders synced, then artist match, then exact title', () => {
+    const rs = [
+      { id: 'cover', title: 'Starboy', artist: 'Piano Covers', synced: true },
+      { id: 'plain', title: 'Starboy', artist: 'The Weeknd', synced: false },
+      { id: 'remix', title: 'Starboy (Remix)', artist: 'The Weeknd', synced: true },
+      { id: 'album', title: 'Starboy', artist: 'The Weeknd, Daft Punk', synced: true },
+    ];
+    expect(rankResults(rs, { title: 'starboy', artist: 'weeknd' }).map((r) => r.id)).toEqual([
+      'album',
+      'remix',
+      'cover',
+      'plain',
+    ]);
+    expect(rankResults(rs).map((r) => r.id)).toEqual(['cover', 'remix', 'album', 'plain']);
+  });
+});
