@@ -1,7 +1,7 @@
 // Offline shell. Lyrics themselves live in IndexedDB, so all we need here is
 // the app: index.html, its hashed bundles, icons.
-const CACHE = 'lyrics-live-v1';
-const SHELL = ['./', './manifest.webmanifest', './icon.svg', './icon-192.png', './icon-512.png', './apple-touch-icon.png'];
+const CACHE = 'lyrics-live-v2';
+const SHELL = ['./', './manifest.webmanifest', './icon.svg', './icon-192.png', './icon-512.png', './apple-touch-icon.png', './nosleep.mp4', './nosleep.webm'];
 const NAV_TIMEOUT = 3000; // venue wifi: don't wait forever for a fresh index.html
 
 self.addEventListener('install', (event) => {
@@ -57,8 +57,26 @@ async function networkFirst(req) {
 async function cacheFirst(req) {
   const cache = await caches.open(CACHE);
   const hit = await cache.match(req, { ignoreSearch: true });
-  if (hit) return hit;
+  if (hit) return req.headers.has('range') ? rangeResponse(req, hit) : hit;
   const res = await fetch(req);
   if (res.ok) cache.put(req, res.clone());
   return res;
+}
+
+// Safari fetches media with Range headers and refuses a plain 200 for them,
+// so slice cached files into 206 responses (needed for the wake-lock video).
+async function rangeResponse(req, res) {
+  const buf = await res.arrayBuffer();
+  const m = /bytes=(\d*)-(\d*)/.exec(req.headers.get('range'));
+  const start = m && m[1] ? Number(m[1]) : 0;
+  const end = m && m[2] ? Math.min(Number(m[2]), buf.byteLength - 1) : buf.byteLength - 1;
+  return new Response(buf.slice(start, end + 1), {
+    status: 206,
+    headers: {
+      'Content-Type': res.headers.get('Content-Type') || 'video/mp4',
+      'Content-Range': `bytes ${start}-${end}/${buf.byteLength}`,
+      'Content-Length': String(end - start + 1),
+      'Accept-Ranges': 'bytes',
+    },
+  });
 }

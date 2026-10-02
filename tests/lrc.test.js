@@ -68,3 +68,18 @@ describe('lrclib helpers', () => {
     expect(setlistLineToQuery('Starboy', 'The Weeknd')).toBe('The Weeknd Starboy');
   });
 });
+
+import { queriesFor } from '../src/lib/lrclib.js';
+
+describe('queriesFor', () => {
+  it('falls back to title-only and the first half of medley titles', () => {
+    expect(queriesFor({ title: 'House Of Balloons / Glass Table Girls', artist: 'The Weeknd' })).toEqual([
+      'The Weeknd House Of Balloons / Glass Table Girls',
+      'House Of Balloons / Glass Table Girls',
+      'The Weeknd House Of Balloons',
+      'House Of Balloons',
+    ]);
+    expect(queriesFor({ title: 'Starboy', artist: 'The Weeknd' })).toEqual(['The Weeknd Starboy', 'Starboy']);
+    expect(queriesFor({ query: 'raw text' })).toEqual(['raw text']);
+  });
+});

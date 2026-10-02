@@ -27,6 +27,9 @@
   let running = $state(false);
   let rate = $state(1);
   let locked = $state(false);
+  let stage = $state(false); // 演出模式: lyrics only, chrome hidden
+  let stageIdle = $state(false);
+  let holding = $state(false);
   let tuning = $state(false);
   let toast = $state('');
   let tapped = $state(-1);
@@ -41,6 +44,8 @@
   let manual = $state(false);
   let manualTimer;
   let toastTimer;
+  let holdTimer;
+  let idleTimer;
 
   function sync() {
     pos = clock.position;
@@ -55,6 +60,9 @@
       clearInterval(t);
       clearTimeout(manualTimer);
       clearTimeout(toastTimer);
+      clearTimeout(holdTimer);
+      clearTimeout(idleTimer);
+      if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
     };
   });
 
@@ -87,10 +95,7 @@
   }
 
   function tapLine(i) {
-    if (locked) {
-      say('已锁定，点右上角解锁');
-      return;
-    }
+    if (locked) return;
     wakeLock.enable(); // retry inside a user gesture, iOS likes that
     const learned = clock.tap(lines[i].t + TAP_LEAD);
     tapped = i;
@@ -99,6 +104,52 @@
     clearTimeout(manualTimer);
     sync();
     if (learned) say(`已校准速度 ${clock.rate.toFixed(2)}×`);
+  }
+
+  // Stage mode. iPhone Safari has no Fullscreen API for pages (the home-screen
+  // app is already full screen); elsewhere we ask for real fullscreen too.
+  function enterStage() {
+    wakeLock.enable();
+    stage = true;
+    tuning = false;
+    poke();
+    document.documentElement.requestFullscreen?.().catch(() => {});
+    say('演出模式 · 点歌词照样能校准');
+  }
+  function exitStage() {
+    stage = false;
+    if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
+  }
+  // Stage controls fade out when untouched for a bit.
+  function poke() {
+    stageIdle = false;
+    clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => (stageIdle = true), 3000);
+  }
+
+  // Lock = a shield over the whole screen; only a long press on the lock
+  // badge gets you out, so pockets and crowds can't change anything.
+  function lock() {
+    wakeLock.enable();
+    locked = true;
+    tuning = false;
+    say('已锁定 · 长按锁图标解锁');
+  }
+  function startHold(e) {
+    e.preventDefault();
+    holding = true;
+    clearTimeout(holdTimer);
+    holdTimer = setTimeout(() => {
+      holding = false;
+      locked = false;
+      navigator.vibrate?.(15);
+      poke();
+      say('已解锁');
+    }, 800);
+  }
+  function endHold() {
+    holding = false;
+    clearTimeout(holdTimer);
   }
 
   function toggle() {
@@ -141,11 +192,16 @@
 
 <svelte:window onkeydown={onKey} />
 
-<div class="player" style="--h: {hue}">
+<!-- touch/mouse only wake the faded stage controls -->
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div class="player" class:stage style="--h: {hue}" ontouchstart={stage ? poke : undefined} onmousemove={stage ? poke : undefined}>
   <div class="ambient" aria-hidden="true"></div>
 
   <header>
-    <a href="#/p/{pid}" class="icon-btn glass" aria-label="返回歌单"><Icon name="back" /></a>
+    <div class="actions">
+      <a href="#/p/{pid}" class="icon-btn glass" aria-label="返回歌单"><Icon name="back" /></a>
+      <span class="spacer"></span>
+    </div>
     <div class="meta">
       <div class="title ellipsis">{song?.title ?? '找不到这首歌'}</div>
       <div class="sub ellipsis">
@@ -153,18 +209,10 @@
         {#if song && !timeline.synced}<span class="tag warn">估算时间轴</span>{/if}
       </div>
     </div>
-    <button
-      class="icon-btn glass"
-      class:on={locked}
-      onclick={() => {
-        locked = !locked;
-        say(locked ? '歌词已锁定，防误触' : '已解锁');
-      }}
-      aria-label={locked ? '解锁歌词点击' : '锁定歌词点击'}
-      aria-pressed={locked}
-    >
-      <Icon name={locked ? 'lock' : 'unlock'} size={19} />
-    </button>
+    <div class="actions">
+      <button class="icon-btn glass" onclick={enterStage} aria-label="演出模式"><Icon name="expand" size={18} /></button>
+      <button class="icon-btn glass" onclick={lock} aria-label="锁屏防误触"><Icon name="lock" size={18} /></button>
+    </div>
   </header>
 
   <div class="progress" aria-hidden="true"><span style="transform: scaleX({progress})"></span></div>
@@ -216,6 +264,36 @@
     </button>
   {/if}
 
+  {#if stage && !locked}
+    <div class="stage-bar" class:idle={stageIdle}>
+      <button class="icon-btn glass" onclick={toggle} aria-label={running ? '暂停' : '播放'}>
+        <Icon name={running ? 'pause' : 'play'} size={18} />
+      </button>
+      <button class="icon-btn glass" onclick={lock} aria-label="锁屏防误触"><Icon name="lock" size={18} /></button>
+      <button class="icon-btn glass" onclick={exitStage} aria-label="退出演出模式"><Icon name="shrink" size={18} /></button>
+    </div>
+  {/if}
+
+  {#if locked}
+    <!-- swallows every touch (taps, scrolls) until the badge is long-pressed -->
+    <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+    <div class="shield" onclick={() => say('长按锁图标解锁')} ontouchmove={(e) => e.preventDefault()}></div>
+    <button
+      class="unlock"
+      class:holding
+      onpointerdown={startHold}
+      onpointerup={endHold}
+      onpointerleave={endHold}
+      onpointercancel={endHold}
+      oncontextmenu={(e) => e.preventDefault()}
+      aria-label="长按解锁"
+    >
+      <svg class="ring" viewBox="0 0 44 44" aria-hidden="true"><circle cx="22" cy="22" r="20" /></svg>
+      <Icon name="lock" size={18} />
+      <span>长按解锁</span>
+    </button>
+  {/if}
+
   <footer>
     {#if ended && next}
       <button class="next-up" onclick={() => go(index + 1)}>
@@ -231,7 +309,7 @@
         <button class="pill" class:on={tuning || rate !== 1} onclick={() => (tuning = !tuning)} aria-expanded={tuning}>
           <Icon name="gauge" size={15} />{rate.toFixed(2)}×
         </button>
-        <span class="wake {wakeLock.status}" title={wakeLock.status === 'on' ? '屏幕常亮已开启' : '屏幕可能自动锁定：设置 → 显示与亮度 → 自动锁定 → 永不'}>
+        <span class="wake {wakeLock.status}" role="img" aria-label="屏幕常亮" title={wakeLock.status === 'on' || wakeLock.status === 'fallback' ? '屏幕常亮已开启' : '点一下歌词或播放键开启常亮'}>
           <Icon name="sun" size={15} />
         </span>
         <span class="count">{playlist ? `${index + 1} / ${playlist.songIds.length}` : ''}</span>
@@ -328,6 +406,13 @@
   .icon-btn.on {
     background: var(--fg);
     color: #000;
+  }
+  .actions {
+    display: flex;
+    gap: 8px;
+  }
+  .spacer {
+    width: 40px;
   }
   .meta {
     flex: 1;
@@ -488,6 +573,110 @@
     z-index: 2;
   }
 
+  /* Stage mode: chrome slides away, lyrics get bigger. */
+  header,
+  .progress,
+  footer {
+    transition:
+      transform 0.35s ease,
+      opacity 0.35s ease;
+  }
+  .stage header {
+    transform: translateY(-100%);
+    opacity: 0;
+    pointer-events: none;
+  }
+  .stage .progress {
+    opacity: 0;
+  }
+  .stage footer {
+    position: absolute !important;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    transform: translateY(110%);
+    opacity: 0;
+    pointer-events: none;
+  }
+  .stage .line {
+    font-size: clamp(32px, 9.5vw, 48px);
+  }
+  .stage .overlay {
+    top: calc(var(--safe-top) + 16px);
+  }
+  .stage-bar {
+    position: absolute !important;
+    left: 50%;
+    bottom: calc(var(--safe-bottom) + 18px);
+    transform: translateX(-50%);
+    display: flex;
+    gap: 12px;
+    padding: 8px;
+    border-radius: 999px;
+    background: rgba(22, 22, 28, 0.5);
+    -webkit-backdrop-filter: blur(20px);
+    backdrop-filter: blur(20px);
+    z-index: 4;
+    transition: opacity 0.6s;
+  }
+  .stage-bar.idle {
+    opacity: 0.25;
+  }
+
+  .shield {
+    position: absolute !important;
+    inset: 0;
+    z-index: 10;
+    touch-action: none;
+  }
+  .unlock {
+    position: absolute !important;
+    left: 50%;
+    bottom: calc(var(--safe-bottom) + 18px);
+    transform: translateX(-50%);
+    z-index: 11;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 48px;
+    padding: 0 18px 0 6px;
+    border-radius: 999px;
+    background: rgba(22, 22, 28, 0.72);
+    -webkit-backdrop-filter: blur(20px);
+    backdrop-filter: blur(20px);
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--dim);
+    -webkit-touch-callout: none;
+    touch-action: none;
+  }
+  /* lock icon sits centred inside the progress ring */
+  .unlock :global(svg:not(.ring)) {
+    position: absolute;
+    left: 16px;
+    color: var(--fg);
+  }
+  .ring {
+    width: 38px;
+    height: 38px;
+    transform: rotate(-90deg);
+  }
+  .ring circle {
+    fill: none;
+    stroke: var(--fg);
+    stroke-width: 3;
+    stroke-linecap: round;
+    stroke-dasharray: 126;
+    stroke-dashoffset: 126;
+  }
+  .unlock.holding .ring circle {
+    stroke-dashoffset: 0;
+    transition: stroke-dashoffset 0.8s linear;
+  }
+  .unlock.holding {
+    color: var(--fg);
+  }
+
   .next-up {
     display: flex;
     align-items: center;
@@ -575,8 +764,11 @@
   .wake.on {
     color: var(--ok);
   }
-  .wake.unsupported,
-  .wake.error {
+  .wake.fallback {
+    color: var(--ok);
+    opacity: 0.7;
+  }
+  .wake.unsupported {
     color: var(--warn);
   }
 

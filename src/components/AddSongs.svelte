@@ -1,11 +1,15 @@
 <script>
+  import { untrack } from 'svelte';
   import { addSong } from '../lib/store.svelte.js';
   import { searchLyrics, setlistLineToQuery } from '../lib/lrclib.js';
   import { importTracks } from '../lib/importer.js';
   import { parseLrc } from '../lib/lrc.js';
   import Icon from './Icon.svelte';
 
-  let { pid } = $props();
+  // target: optional { query, at } pre-fill from a missing track; the next
+  // song added from search goes into slot `at` and onTargetDone(true) fires;
+  // cancelling fires onTargetDone(false).
+  let { pid, target = null, onTargetDone = () => {} } = $props();
 
   const TABS = [
     ['search', '搜索'],
@@ -39,8 +43,23 @@
     }
   }
 
+  $effect(() => {
+    const t = target;
+    if (!t) return;
+    untrack(() => {
+      tab = 'search';
+      query = t.query;
+      search();
+    });
+  });
+
   function add(r) {
-    addSong(pid, r);
+    if (target) {
+      addSong(pid, r, target.at);
+      onTargetDone(true);
+    } else {
+      addSong(pid, r);
+    }
     added = new Set(added).add(r.lrclibId);
   }
 
@@ -53,9 +72,9 @@
     const lines = setlist.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
     if (!lines.length) return;
     batch = { done: 0, total: lines.length, failed: [] };
-    const tracks = lines.map((line) => ({ line, query: setlistLineToQuery(line, artist.trim()) }));
+    const tracks = lines.map((line) => ({ title: line, query: setlistLineToQuery(line, artist.trim()) }));
     const failed = await importTracks(pid, tracks, (done) => (batch.done = done));
-    batch.failed = failed.map((t) => t.line);
+    batch.failed = failed.map((t) => t.title);
     setlist = batch.failed.join('\n');
   }
 
@@ -101,6 +120,12 @@
 
 <section class="section">
   <h2 class="section-title">添加歌曲</h2>
+  {#if target}
+    <div class="target">
+      <span>给第 {target.at + 1} 首找歌词</span>
+      <button class="btn small" onclick={() => onTargetDone(false)}>取消</button>
+    </div>
+  {/if}
 
   <div class="segmented" role="tablist">
     {#each TABS as [key, label]}
@@ -172,6 +197,18 @@
 </section>
 
 <style>
+  .target {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 10px;
+    padding: 8px 8px 8px 14px;
+    border-radius: 12px;
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-size: 14px;
+    font-weight: 600;
+  }
   .segmented {
     display: grid;
     grid-template-columns: repeat(3, 1fr);

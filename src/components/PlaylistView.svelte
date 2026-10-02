@@ -1,6 +1,19 @@
 <script>
-  import { lib, playlistById, renamePlaylist, deletePlaylist, moveSong, removeSong } from '../lib/store.svelte.js';
+  import { tick } from 'svelte';
+  import {
+    lib,
+    playlistById,
+    renamePlaylist,
+    deletePlaylist,
+    moveSong,
+    removeSong,
+    addSong,
+    dropMissing,
+  } from '../lib/store.svelte.js';
+  import { findTrack, cleanTitle } from '../lib/lrclib.js';
+  import { fillPreset } from '../lib/importer.js';
   import { coverStyle } from '../lib/color.js';
+  import { presets } from '../presets.js';
   import AddSongs from './AddSongs.svelte';
   import Icon from './Icon.svelte';
 
@@ -10,7 +23,49 @@
   const songs = $derived(playlist ? playlist.songIds.map((sid) => lib.songs[sid]).filter(Boolean) : []);
   const totalMin = $derived(Math.round(songs.reduce((a, s) => a + (s.duration || 0), 0) / 60));
 
+  const missing = $derived(playlist?.missing ?? []);
+  const preset = $derived(playlist?.presetId && presets.find((x) => x.id === playlist.presetId));
+  // Older imports didn't record misses; offer to re-check against the preset.
+  const presetGap = $derived(preset ? preset.tracks.length - songs.length - missing.length : 0);
+
   let editing = $state(false);
+  let retrying = $state(new Set());
+  let filling = $state(null); // { done, total }
+  let target = $state(null); // search pre-fill for AddSongs: { query, at, missingIndex }
+  let addEl = $state();
+
+  async function retry(i) {
+    const m = missing[i];
+    retrying = new Set(retrying).add(m.title);
+    try {
+      const hit = await findTrack(m);
+      if (hit) {
+        addSong(id, hit, m.at);
+        dropMissing(id, i);
+      } else {
+        alert(`还是没找到「${m.title}」，试试手动搜，或者导入 LRC`);
+      }
+    } catch (err) {
+      alert(`搜索失败：${err.message}`);
+    } finally {
+      const next = new Set(retrying);
+      next.delete(m.title);
+      retrying = next;
+    }
+  }
+
+  async function searchFor(i) {
+    const m = missing[i];
+    target = { query: m.query ?? `${m.artist ?? ''} ${cleanTitle(m.title)}`.trim(), at: m.at, missingIndex: i };
+    await tick();
+    addEl?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  async function fill() {
+    filling = { done: 0, total: preset.tracks.length };
+    await fillPreset(id, preset.tracks, (done) => (filling.done = done));
+    filling = null;
+  }
 
   function rename() {
     const name = prompt('歌单名', playlist.name);
@@ -90,10 +145,50 @@
       <p class="muted empty">还是空的。下面搜歌，或者把整场 setlist 一次粘进来。</p>
     {/if}
 
+    {#if !editing && (missing.length || presetGap > 0)}
+      <section class="missing card">
+        <div class="missing-head">
+          <span>没找到的歌</span>
+          {#if presetGap > 0 && !missing.length}
+            <span class="muted">比预设少 {presetGap} 首</span>
+          {/if}
+        </div>
+        {#if presetGap > 0}
+          <button class="btn small fill" onclick={fill} disabled={!!filling}>
+            {#if filling}正在核对 {filling.done}/{filling.total}{:else}<Icon name="sparkle" size={16} />对照预设补全{/if}
+          </button>
+        {/if}
+        <ul class="rows">
+          {#each missing as m, i (m.title + m.at)}
+            <li>
+              <div class="grow">
+                <div class="title ellipsis">{m.title}</div>
+                <div class="sub">{m.artist ?? ''}{m.at != null ? ` · 第 ${m.at + 1} 首` : ''}</div>
+              </div>
+              <button class="icon-btn" onclick={() => retry(i)} disabled={retrying.has(m.title)} aria-label="重试">
+                {#if retrying.has(m.title)}<span class="spinner"></span>{:else}<Icon name="rewind" size={19} />{/if}
+              </button>
+              <button class="icon-btn" onclick={() => searchFor(i)} aria-label="手动搜"><Icon name="search" size={19} /></button>
+              <button class="icon-btn" onclick={() => dropMissing(id, i)} aria-label="不要了"><Icon name="x" size={19} /></button>
+            </li>
+          {/each}
+        </ul>
+      </section>
+    {/if}
+
     {#if editing}
       <button class="btn danger delete" onclick={remove}><Icon name="trash" size={18} />删除这个歌单</button>
     {:else}
-      <AddSongs pid={id} />
+      <div bind:this={addEl}>
+        <AddSongs
+          pid={id}
+          {target}
+          onTargetDone={(added) => {
+            if (added && target) dropMissing(id, target.missingIndex);
+            target = null;
+          }}
+        />
+      </div>
     {/if}
   {/if}
 </div>
@@ -159,6 +254,35 @@
   }
   .empty {
     margin-top: 24px;
+  }
+  .missing {
+    margin-top: 24px;
+    padding: 14px 14px 4px;
+    border: 1px solid color-mix(in srgb, var(--warn) 30%, transparent);
+    background: color-mix(in srgb, var(--warn) 6%, transparent);
+  }
+  .missing-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    font-weight: 700;
+    color: var(--warn);
+  }
+  .fill {
+    margin: 10px 0 4px;
+  }
+  .spinner {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    border: 2px solid var(--faint);
+    border-top-color: var(--fg);
+    animation: spin 0.7s linear infinite;
+  }
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
   }
   .delete {
     width: 100%;
