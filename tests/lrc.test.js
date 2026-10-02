@@ -103,3 +103,28 @@ describe('rankResults', () => {
     expect(rankResults(rs).map((r) => r.id)).toEqual(['cover', 'remix', 'album', 'plain']);
   });
 });
+
+import { primaryArtist, isPlaceholder, pickDeezer } from '../src/lib/artwork.js';
+
+describe('artwork helpers', () => {
+  it('takes the lead artist', () => {
+    expect(primaryArtist('Metro Boomin, The Weeknd, 21 Savage')).toBe('Metro Boomin');
+    expect(primaryArtist('The Weeknd feat. Daft Punk')).toBe('The Weeknd');
+    expect(primaryArtist('Florence + The Machine')).toBe('Florence + The Machine');
+  });
+
+  it('spots Deezer placeholder images', () => {
+    expect(isPlaceholder('https://e-cdns-images.dzcdn.net/images/artist//500x500-000000-80-0-0.jpg')).toBe(true);
+    expect(isPlaceholder('https://e-cdns-images.dzcdn.net/images/artist/abc123/500x500-000000-80-0-0.jpg')).toBe(false);
+    expect(isPlaceholder(null)).toBe(true);
+  });
+
+  it('picks the right artist, then closest duration', () => {
+    const rs = [
+      { id: 'cover', artist: { name: 'Piano Tribute' }, duration: 230 },
+      { id: 'live', artist: { name: 'The Weeknd' }, duration: 300 },
+      { id: 'album', artist: { name: 'The Weeknd' }, duration: 231 },
+    ];
+    expect(pickDeezer(rs, { artist: 'The Weeknd', duration: 230 }).id).toBe('album');
+  });
+});

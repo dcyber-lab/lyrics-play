@@ -5,7 +5,9 @@
   import { SyncClock, activeIndex, MIN_RATE, MAX_RATE } from '../lib/clock.js';
   import { wakeLock } from '../lib/wakelock.svelte.js';
   import { hueOf } from '../lib/color.js';
+  import { ensureArt } from '../lib/artwork.js';
   import Icon from './Icon.svelte';
+  import Cover from './Cover.svelte';
 
   let { pid, index } = $props();
 
@@ -54,6 +56,7 @@
   }
 
   onMount(() => {
+    if (song && !song.artChecked) ensureArt([song.id]);
     const t = setInterval(sync, 100);
     centerOn(0, false);
     return () => {
@@ -195,12 +198,16 @@
 <!-- touch/mouse only wake the faded stage controls -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="player" class:stage style="--h: {hue}" ontouchstart={stage ? poke : undefined} onmousemove={stage ? poke : undefined}>
-  <div class="ambient" aria-hidden="true"></div>
+  <div class="ambient" class:dim={song?.art?.cover} aria-hidden="true"></div>
+  {#if song?.art?.cover}
+    <!-- blurred album art as the backdrop, Apple Music style -->
+    <div class="art-bg" style="background-image: url('{song.art.cover}')" aria-hidden="true"></div>
+  {/if}
 
   <header>
     <div class="actions">
       <a href="#/p/{pid}" class="icon-btn glass" aria-label="返回歌单"><Icon name="back" /></a>
-      <span class="spacer"></span>
+      <Cover src={song?.art?.cover} seed={song?.title ?? ''} size={40} radius={8} />
     </div>
     <div class="meta">
       <div class="title ellipsis">{song?.title ?? '找不到这首歌'}</div>
@@ -297,6 +304,7 @@
   <footer>
     {#if ended && next}
       <button class="next-up" onclick={() => go(index + 1)}>
+        <Cover src={next.art?.cover} seed={next.title} size={36} radius={7} />
         <span class="next-label">下一首</span>
         <span class="next-title ellipsis">{next.title}</span>
         <span class="icon-btn small-play"><Icon name="play" size={16} /></span>
@@ -387,7 +395,22 @@
       transform: translate3d(4%, -3%, 0) scale(1.08);
     }
   }
-  .player > :not(.ambient) {
+  .ambient.dim {
+    opacity: 0.35;
+  }
+  .art-bg {
+    position: absolute;
+    inset: -15%;
+    background-size: cover;
+    background-position: center;
+    filter: blur(48px) saturate(1.5) brightness(0.42);
+    animation: drift 30s ease-in-out infinite alternate;
+    pointer-events: none;
+  }
+  .stage .art-bg {
+    filter: blur(56px) saturate(1.4) brightness(0.38);
+  }
+  .player > :not(.ambient):not(.art-bg) {
     position: relative;
   }
 
@@ -410,9 +433,6 @@
   .actions {
     display: flex;
     gap: 8px;
-  }
-  .spacer {
-    width: 40px;
   }
   .meta {
     flex: 1;
@@ -681,7 +701,7 @@
     display: flex;
     align-items: center;
     gap: 10px;
-    padding: 10px 10px 10px 16px;
+    padding: 8px 10px 8px 8px;
     border-radius: 20px;
     background: rgba(255, 255, 255, 0.92);
     color: #000;

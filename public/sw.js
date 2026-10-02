@@ -1,6 +1,9 @@
 // Offline shell. Lyrics themselves live in IndexedDB, so all we need here is
 // the app: index.html, its hashed bundles, icons.
-const CACHE = 'lyrics-live-v2';
+const CACHE = 'lyrics-live-v3';
+// Album covers / artist photos. Kept across app versions; it's content, not code.
+const IMG_CACHE = 'lyrics-live-img';
+const IMG_HOSTS = /(^|\.)(dzcdn\.net|mzstatic\.com)$/;
 const SHELL = ['./', './manifest.webmanifest', './icon.svg', './icon-192.png', './icon-512.png', './apple-touch-icon.png', './nosleep.mp4', './nosleep.webm'];
 const NAV_TIMEOUT = 3000; // venue wifi: don't wait forever for a fresh index.html
 
@@ -22,7 +25,7 @@ self.addEventListener('install', (event) => {
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     (async () => {
-      for (const key of await caches.keys()) if (key !== CACHE) await caches.delete(key);
+      for (const key of await caches.keys()) if (key !== CACHE && key !== IMG_CACHE) await caches.delete(key);
       await self.clients.claim();
     })()
   );
@@ -31,7 +34,12 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   const req = event.request;
   const url = new URL(req.url);
-  if (req.method !== 'GET' || url.origin !== location.origin) return;
+  if (req.method !== 'GET') return;
+  if (IMG_HOSTS.test(url.hostname)) {
+    event.respondWith(imageCacheFirst(req));
+    return;
+  }
+  if (url.origin !== location.origin) return;
 
   if (req.mode === 'navigate') {
     event.respondWith(networkFirst(req));
@@ -52,6 +60,18 @@ async function networkFirst(req) {
   } catch {
     return (await cache.match('./')) ?? Response.error();
   }
+}
+
+// Cross-origin images come back opaque (no CORS); that's fine for <img> and
+// for the cache, we just can't inspect them. Keyed by URL so a prefetch with
+// fetch(..., {mode: 'no-cors'}) and a later <img> share one entry.
+async function imageCacheFirst(req) {
+  const cache = await caches.open(IMG_CACHE);
+  const hit = await cache.match(req.url);
+  if (hit) return hit;
+  const res = await fetch(req.url, { mode: 'no-cors' });
+  if (res.ok || res.type === 'opaque') cache.put(req.url, res.clone());
+  return res;
 }
 
 async function cacheFirst(req) {

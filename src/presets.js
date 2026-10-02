@@ -11,6 +11,7 @@ export const presets = [
   {
     id: 'the-weeknd',
     name: 'The Weeknd',
+    artist: 'The Weeknd', // for the card's photo
     tracks: [
       t('The Abyss (feat. Lana Del Rey)', 'The Weeknd', '4:42'),
       t('Wake Me Up (feat. Justice)', 'The Weeknd', '5:08'),
