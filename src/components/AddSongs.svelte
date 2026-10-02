@@ -1,10 +1,17 @@
 <script>
   import { addSong } from '../lib/store.svelte.js';
   import { searchLyrics, setlistLineToQuery } from '../lib/lrclib.js';
+  import { importTracks } from '../lib/importer.js';
   import { parseLrc } from '../lib/lrc.js';
+  import Icon from './Icon.svelte';
 
   let { pid } = $props();
 
+  const TABS = [
+    ['search', '搜索'],
+    ['batch', '批量'],
+    ['manual', 'LRC'],
+  ];
   let tab = $state('search');
 
   // search
@@ -24,7 +31,7 @@
     searchError = '';
     try {
       results = await searchLyrics(query.trim(), { signal: controller.signal });
-      if (!results.length) searchError = '没找到';
+      if (!results.length) searchError = '没找到，换个写法试试（歌名 + 歌手）';
     } catch (err) {
       if (err.name !== 'AbortError') searchError = `搜索失败：${err.message}`;
     } finally {
@@ -46,16 +53,9 @@
     const lines = setlist.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
     if (!lines.length) return;
     batch = { done: 0, total: lines.length, failed: [] };
-    for (const line of lines) {
-      try {
-        const [best] = await searchLyrics(setlistLineToQuery(line, artist.trim()));
-        if (best) addSong(pid, best);
-        else batch.failed.push(line);
-      } catch {
-        batch.failed.push(line);
-      }
-      batch.done++;
-    }
+    const tracks = lines.map((line) => ({ line, query: setlistLineToQuery(line, artist.trim()) }));
+    const failed = await importTracks(pid, tracks, (done) => (batch.done = done));
+    batch.failed = failed.map((t) => t.line);
     setlist = batch.failed.join('\n');
   }
 
@@ -78,7 +78,7 @@
   function addManual(e) {
     e.preventDefault();
     if (!mTitle.trim() || !mLyrics.trim()) {
-      mError = '标题和歌词都要填';
+      mError = '歌名和歌词都要填';
       return;
     }
     const synced = parseLrc(mLyrics).lines.length > 0;
@@ -99,97 +99,175 @@
   }
 </script>
 
-<div class="section">
-  <div class="tabs">
-    <button class:on={tab === 'search'} onclick={() => (tab = 'search')}>搜索</button>
-    <button class:on={tab === 'batch'} onclick={() => (tab = 'batch')}>批量 setlist</button>
-    <button class:on={tab === 'manual'} onclick={() => (tab = 'manual')}>导入 LRC</button>
+<section class="section">
+  <h2 class="section-title">添加歌曲</h2>
+
+  <div class="segmented" role="tablist">
+    {#each TABS as [key, label]}
+      <button role="tab" aria-selected={tab === key} class:on={tab === key} onclick={() => (tab = key)}>{label}</button>
+    {/each}
   </div>
 
-  {#if tab === 'search'}
-    <form class="row" onsubmit={search}>
-      <input bind:value={query} placeholder="歌名 + 歌手，比如 yellow coldplay" enterkeyhint="search" />
-      <button class="primary" type="submit" disabled={searching}>{searching ? '…' : '搜'}</button>
-    </form>
-    {#if searchError}<p class="error">{searchError}</p>{/if}
-    {#if results.length}
-      <ul class="list results">
-        {#each results as r (r.lrclibId)}
-          <li>
-            <div class="grow">
-              <div class="title">{r.title}</div>
-              <div class="muted row">
-                <span class="title">{r.artist}{r.album ? ` · ${r.album}` : ''}</span>
-                <span>{fmt(r.duration)}</span>
-                {#if r.synced}<span class="badge ok">同步</span>{:else}<span class="badge warn">无时间轴</span>{/if}
+  <div class="panel">
+    {#if tab === 'search'}
+      <form class="searchbar" onsubmit={search}>
+        <Icon name="search" size={18} />
+        <input bind:value={query} placeholder="歌名 + 歌手" enterkeyhint="search" type="search" />
+        {#if searching}<span class="spinner"></span>{/if}
+      </form>
+      {#if searchError}<p class="error">{searchError}</p>{/if}
+      {#if results.length}
+        <ul class="rows">
+          {#each results as r (r.lrclibId)}
+            {@const isAdded = added.has(r.lrclibId)}
+            <li>
+              <div class="grow">
+                <div class="title ellipsis">{r.title}</div>
+                <div class="sub">
+                  <span class="ellipsis">{r.artist}{r.album ? ` · ${r.album}` : ''}</span>
+                  <span>{fmt(r.duration)}</span>
+                  {#if !r.synced}<span class="tag warn">无时间轴</span>{/if}
+                </div>
               </div>
-            </div>
-            <button class="small" disabled={added.has(r.lrclibId)} onclick={() => add(r)}>
-              {added.has(r.lrclibId) ? '已加' : '＋'}
-            </button>
-          </li>
-        {/each}
-      </ul>
-    {/if}
-  {:else if tab === 'batch'}
-    <p class="muted">每行一首，比如从 setlist.fm 复制过来。会自动选第一个带时间轴的结果，之后可以在列表里删掉选错的。</p>
-    <input bind:value={artist} placeholder="歌手（可选，会加到每行的搜索里）" />
-    <textarea bind:value={setlist} rows="8" placeholder={'Yellow\nViva la Vida\nFix You'}></textarea>
-    <div class="row">
-      <button class="primary" onclick={runBatch} disabled={batch && batch.done < batch.total}>批量添加</button>
-      {#if batch}
-        <span class="muted">
-          {batch.done}/{batch.total}
-          {#if batch.done === batch.total && batch.failed.length}· {batch.failed.length} 首没找到，留在输入框里了{/if}
-        </span>
+              <button class="icon-btn add" class:done={isAdded} disabled={isAdded} onclick={() => add(r)} aria-label="添加">
+                <Icon name={isAdded ? 'check' : 'plus'} size={20} />
+              </button>
+            </li>
+          {/each}
+        </ul>
       {/if}
-    </div>
-  {:else}
-    <form class="manual" onsubmit={addManual}>
-      <div class="row">
-        <input bind:value={mTitle} placeholder="歌名" />
-        <input bind:value={mArtist} placeholder="歌手" />
+    {:else if tab === 'batch'}
+      <p class="muted hint">每行一首，比如从 setlist.fm 复制过来。自动挑带时间轴的版本，选错了在上面的列表里删掉就行。</p>
+      <input bind:value={artist} placeholder="歌手（可选，会加到每一行）" />
+      <textarea bind:value={setlist} rows="7" placeholder={'Starboy\nBlinding Lights\nSave Your Tears'}></textarea>
+      <div class="actions">
+        {#if batch}
+          <span class="muted">
+            {batch.done}/{batch.total}
+            {#if batch.done === batch.total && batch.failed.length}· {batch.failed.length} 首没找到，留在框里了{/if}
+          </span>
+        {/if}
+        <button class="btn primary" onclick={runBatch} disabled={!setlist.trim() || (batch && batch.done < batch.total)}>
+          <Icon name="list" size={18} />批量添加
+        </button>
       </div>
-      <textarea bind:value={mLyrics} rows="8" placeholder="粘贴 LRC（[00:12.34]歌词）或纯文本歌词"></textarea>
-      <div class="row">
-        <label class="file">选 .lrc 文件<input type="file" accept=".lrc,.txt,text/plain" onchange={loadFile} /></label>
-        <button class="primary" type="submit">添加</button>
-      </div>
-      {#if mError}<p class="error">{mError}</p>{/if}
-    </form>
-  {/if}
-</div>
+    {:else}
+      <form class="stack" onsubmit={addManual}>
+        <div class="two">
+          <input bind:value={mTitle} placeholder="歌名" />
+          <input bind:value={mArtist} placeholder="歌手" />
+        </div>
+        <textarea bind:value={mLyrics} rows="7" placeholder="粘贴 LRC（[00:12.34] 歌词）或纯文本歌词"></textarea>
+        {#if mError}<p class="error">{mError}</p>{/if}
+        <div class="actions">
+          <label class="btn">
+            <Icon name="file" size={18} />选 .lrc 文件
+            <input type="file" accept=".lrc,.txt,text/plain" onchange={loadFile} hidden />
+          </label>
+          <button class="btn primary" type="submit"><Icon name="plus" size={18} />添加</button>
+        </div>
+      </form>
+    {/if}
+  </div>
+</section>
 
 <style>
-  .section > :global(* + *) {
-    margin-top: 10px;
-  }
-  .tabs {
-    display: flex;
-    gap: 6px;
-  }
-  .tabs button {
-    flex: 1;
-    padding: 8px;
-    font-size: 14px;
-    color: var(--dim);
-  }
-  .tabs button.on {
-    color: var(--fg);
-    border-color: var(--accent);
-  }
-  .manual > :global(* + *) {
-    margin-top: 10px;
-  }
-  .file {
-    background: var(--panel);
-    border: 1px solid var(--line);
+  .segmented {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    padding: 3px;
     border-radius: 12px;
-    padding: 10px 14px;
-    cursor: pointer;
-    white-space: nowrap;
+    background: var(--surface);
   }
-  .file input {
+  .segmented button {
+    height: 34px;
+    border-radius: 9px;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--dim);
+    transition:
+      background 0.2s,
+      color 0.2s;
+  }
+  .segmented button.on {
+    background: var(--surface-press);
+    color: var(--fg);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  }
+
+  .panel {
+    margin-top: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .stack {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .two {
+    display: flex;
+    gap: 10px;
+  }
+  .hint {
+    margin: 0;
+    line-height: 1.5;
+  }
+  .actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 10px;
+  }
+  .actions .muted {
+    margin-right: auto;
+  }
+
+  .searchbar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 0 14px;
+    border-radius: 12px;
+    background: var(--surface);
+    color: var(--faint);
+  }
+  .searchbar:focus-within {
+    background: var(--surface-2);
+  }
+  .searchbar input {
+    flex: 1;
+    padding: 12px 0;
+    background: none;
+    border: 0;
+  }
+  .searchbar input::-webkit-search-cancel-button {
     display: none;
+  }
+  .spinner {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    border: 2px solid var(--faint);
+    border-top-color: var(--fg);
+    animation: spin 0.7s linear infinite;
+  }
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+
+  .add {
+    background: var(--accent-soft);
+    color: var(--accent);
+    width: 34px;
+    height: 34px;
+  }
+  .add.done {
+    background: color-mix(in srgb, var(--ok) 16%, transparent);
+    color: var(--ok);
+    opacity: 1;
   }
 </style>
