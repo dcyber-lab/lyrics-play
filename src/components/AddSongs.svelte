@@ -1,12 +1,12 @@
 <script>
   import { untrack } from 'svelte';
   import { addSong } from '../lib/store.svelte.js';
-  import { searchLyrics, setlistLineToQuery } from '../lib/lrclib.js';
+  import { searchByFields, setlistLineToQuery } from '../lib/lrclib.js';
   import { importTracks } from '../lib/importer.js';
   import { parseLrc } from '../lib/lrc.js';
   import Icon from './Icon.svelte';
 
-  // target: optional { query, at } pre-fill from a missing track; the next
+  // target: optional { title, artist, at } pre-fill from a missing track; the next
   // song added from search goes into slot `at` and onTargetDone(true) fires;
   // cancelling fires onTargetDone(false).
   let { pid, target = null, onTargetDone = () => {} } = $props();
@@ -18,8 +18,17 @@
   ];
   let tab = $state('search');
 
-  // search
-  let query = $state('');
+  // search — artist is remembered across searches (usually one act per show)
+  const ARTIST_KEY = 'lyrics-live:artist';
+  const readArtist = () => {
+    try {
+      return localStorage.getItem(ARTIST_KEY) ?? '';
+    } catch {
+      return '';
+    }
+  };
+  let qTitle = $state('');
+  let qArtist = $state(readArtist());
   let results = $state([]);
   let searching = $state(false);
   let searchError = $state('');
@@ -28,14 +37,17 @@
 
   async function search(e) {
     e?.preventDefault();
-    if (!query.trim()) return;
+    if (!qTitle.trim() && !qArtist.trim()) return;
+    try {
+      localStorage.setItem(ARTIST_KEY, qArtist.trim());
+    } catch {}
     controller?.abort();
     controller = new AbortController();
     searching = true;
     searchError = '';
     try {
-      results = await searchLyrics(query.trim(), { signal: controller.signal });
-      if (!results.length) searchError = '没找到，换个写法试试（歌名 + 歌手）';
+      results = await searchByFields({ title: qTitle, artist: qArtist }, { signal: controller.signal });
+      if (!results.length) searchError = '没找到。检查一下拼写，或者先把歌手清空再搜';
     } catch (err) {
       if (err.name !== 'AbortError') searchError = `搜索失败：${err.message}`;
     } finally {
@@ -48,7 +60,8 @@
     if (!t) return;
     untrack(() => {
       tab = 'search';
-      query = t.query;
+      qTitle = t.title ?? '';
+      qArtist = t.artist ?? '';
       search();
     });
   });
@@ -135,10 +148,21 @@
 
   <div class="panel">
     {#if tab === 'search'}
-      <form class="searchbar" onsubmit={search}>
-        <Icon name="search" size={18} />
-        <input bind:value={query} placeholder="歌名 + 歌手" enterkeyhint="search" type="search" />
-        {#if searching}<span class="spinner"></span>{/if}
+      <form class="fields" onsubmit={search}>
+        <label class="field">
+          <Icon name="music" size={17} />
+          <input bind:value={qTitle} placeholder="歌名" enterkeyhint="search" type="search" autocomplete="off" />
+        </label>
+        <label class="field">
+          <Icon name="user" size={17} />
+          <input bind:value={qArtist} placeholder="歌手（可选）" enterkeyhint="search" type="search" autocomplete="off" />
+          {#if qArtist}
+            <button type="button" class="clear" onclick={() => (qArtist = '')} aria-label="清空歌手"><Icon name="x" size={14} /></button>
+          {/if}
+        </label>
+        <button class="btn primary" type="submit" disabled={searching || (!qTitle.trim() && !qArtist.trim())}>
+          {#if searching}<span class="spinner"></span>{:else}<Icon name="search" size={18} />{/if}搜索
+        </button>
       </form>
       {#if searchError}<p class="error">{searchError}</p>{/if}
       {#if results.length}
@@ -261,7 +285,12 @@
     margin-right: auto;
   }
 
-  .searchbar {
+  .fields {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .field {
     display: flex;
     align-items: center;
     gap: 10px;
@@ -269,18 +298,45 @@
     border-radius: 12px;
     background: var(--surface);
     color: var(--faint);
+    border: 1px solid transparent;
+    transition:
+      background 0.15s,
+      border-color 0.15s;
   }
-  .searchbar:focus-within {
+  .field:focus-within {
     background: var(--surface-2);
+    border-color: color-mix(in srgb, var(--accent) 60%, transparent);
+    color: var(--dim);
   }
-  .searchbar input {
+  .field input {
     flex: 1;
+    min-width: 0;
     padding: 12px 0;
     background: none;
     border: 0;
   }
-  .searchbar input::-webkit-search-cancel-button {
+  .field input:focus {
+    background: none;
+    border: 0;
+  }
+  .field input::-webkit-search-cancel-button {
     display: none;
+  }
+  .clear {
+    display: grid;
+    place-items: center;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    background: var(--surface-press);
+    color: var(--fg);
+  }
+  .fields .btn {
+    width: 100%;
+  }
+  .fields .spinner {
+    border-color: rgba(255, 255, 255, 0.4);
+    border-top-color: #fff;
   }
   .spinner {
     width: 16px;

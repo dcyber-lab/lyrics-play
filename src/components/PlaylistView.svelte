@@ -56,7 +56,10 @@
 
   async function searchFor(i) {
     const m = missing[i];
-    target = { query: m.query ?? `${m.artist ?? ''} ${cleanTitle(m.title)}`.trim(), at: m.at, missingIndex: i };
+    // batch misses only have the raw line; put it all in the title field
+    target = m.query
+      ? { title: m.title, artist: '', at: m.at, missingIndex: i }
+      : { title: cleanTitle(m.title), artist: m.artist ?? '', at: m.at, missingIndex: i };
     await tick();
     addEl?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
