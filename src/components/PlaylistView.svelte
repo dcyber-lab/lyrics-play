@@ -1,5 +1,5 @@
 <script>
-  import { tick } from 'svelte';
+  import { tick, untrack } from 'svelte';
   import {
     lib,
     playlistById,
@@ -12,9 +12,11 @@
   } from '../lib/store.svelte.js';
   import { findTrack, cleanTitle } from '../lib/lrclib.js';
   import { fillPreset } from '../lib/importer.js';
-  import { coverStyle } from '../lib/color.js';
   import { presets } from '../presets.js';
+  import { ensureArt, playlistImageUrls, cacheImages, countCached } from '../lib/artwork.js';
   import AddSongs from './AddSongs.svelte';
+  import Cover from './Cover.svelte';
+  import PlaylistCover from './PlaylistCover.svelte';
   import Icon from './Icon.svelte';
 
   let { id } = $props();
@@ -27,6 +29,33 @@
   const preset = $derived(playlist?.presetId && presets.find((x) => x.id === playlist.presetId));
   // Older imports didn't record misses; offer to re-check against the preset.
   const presetGap = $derived(preset ? preset.tracks.length - songs.length - missing.length : 0);
+
+  // Artwork: look up and cache automatically whenever the song list changes;
+  // the status line shows how much is available offline.
+  let art = $state({ cached: 0, total: 0, busy: false, done: 0, todo: 0 });
+
+  async function refreshArtStatus() {
+    const urls = playlistImageUrls(playlist?.songIds ?? []);
+    art.total = urls.length;
+    art.cached = await countCached(urls);
+  }
+
+  async function syncArt(ids, { manual = false } = {}) {
+    if (manual) art.busy = true;
+    try {
+      await ensureArt(ids, (d, t) => manual && Object.assign(art, { done: d, todo: t }));
+      const urls = playlistImageUrls(ids);
+      await cacheImages(urls, (d, t) => manual && Object.assign(art, { done: d, todo: t }));
+    } finally {
+      art.busy = false;
+      refreshArtStatus();
+    }
+  }
+
+  $effect(() => {
+    const ids = [...(playlist?.songIds ?? [])];
+    untrack(() => syncArt(ids));
+  });
 
   let editing = $state(false);
   let retrying = $state(new Set());
@@ -103,7 +132,7 @@
     </div>
 
     <header class="hero">
-      <div class="cover big" style={coverStyle(playlist.name)}><Icon name="music" size={44} /></div>
+      <div class="hero-cover"><PlaylistCover {playlist} size={112} radius={18} /></div>
       <div class="hero-text">
         {#if editing}
           <button class="name editable" onclick={rename}>{playlist.name}</button>
@@ -111,6 +140,20 @@
           <h1 class="name">{playlist.name}</h1>
         {/if}
         <div class="muted">{songs.length} 首{totalMin ? ` · 约 ${totalMin} 分钟` : ''}</div>
+        {#if songs.length && !editing}
+          <div class="art-status">
+            {#if art.busy}
+              <span class="spinner"></span>正在下载图片 {art.done}/{art.todo}
+            {:else if art.total}
+              <span class:ok={art.cached === art.total}>图片已离线 {art.cached}/{art.total}</span>
+              {#if art.cached < art.total}
+                <button class="link" onclick={() => syncArt([...playlist.songIds], { manual: true })}>下载</button>
+              {/if}
+            {:else}
+              <button class="link" onclick={() => syncArt([...playlist.songIds], { manual: true })}>获取封面</button>
+            {/if}
+          </div>
+        {/if}
       </div>
     </header>
 
@@ -119,11 +162,11 @@
     {/if}
 
     {#if songs.length}
-      <ul class="rows songs" style="--rule-inset: 40px">
+      <ul class="rows songs" style="--rule-inset: {editing ? 40 : 64}px">
         {#each songs as song, i (i + song.id)}
           <li>
-            <span class="idx">{i + 1}</span>
             {#if editing}
+              <span class="idx">{i + 1}</span>
               <div class="grow">
                 <div class="title ellipsis">{song.title}</div>
                 <div class="sub ellipsis">{song.artist}</div>
@@ -132,13 +175,16 @@
               <button class="icon-btn" disabled={i === songs.length - 1} onclick={() => moveSong(id, i, 1)} aria-label="下移"><Icon name="down" size={20} /></button>
               <button class="icon-btn danger" onclick={() => removeSong(id, i)} aria-label="移除"><Icon name="x" size={20} /></button>
             {:else}
-              <a class="grow" href="#/play/{id}/{i}">
+              <a class="grow song-link" href="#/play/{id}/{i}">
+                <Cover src={song.art?.cover} seed={song.title} size={48} radius={8} />
+                <span class="song-text">
                 <div class="title ellipsis">{song.title}</div>
                 <div class="sub">
                   <span class="ellipsis">{song.artist}</span>
                   {#if song.duration}<span class="dot">·</span><span>{fmt(song.duration)}</span>{/if}
                   {#if !song.synced}<span class="tag warn">估算</span>{/if}
                 </div>
+                </span>
               </a>
             {/if}
           </li>
@@ -203,9 +249,9 @@
     gap: 16px;
     margin-top: 4px;
   }
-  .cover.big {
-    width: 112px;
-    height: 112px;
+  .hero-cover {
+    display: flex;
+    flex: none;
     border-radius: 18px;
     box-shadow:
       0 18px 40px -12px rgba(0, 0, 0, 0.7),
@@ -240,6 +286,37 @@
 
   .songs {
     margin-top: 12px;
+  }
+  .song-link {
+    display: flex !important;
+    align-items: center;
+    gap: 12px;
+    min-width: 0;
+  }
+  .song-text {
+    display: block;
+    flex: 1;
+    min-width: 0;
+  }
+  .art-status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 6px;
+    font-size: 12px;
+    color: var(--faint);
+  }
+  .art-status .ok {
+    color: var(--ok);
+  }
+  .link {
+    color: var(--accent);
+    font-weight: 600;
+    font-size: 12px;
+  }
+  .art-status .spinner {
+    width: 12px;
+    height: 12px;
   }
   .idx {
     width: 24px;

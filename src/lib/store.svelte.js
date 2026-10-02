@@ -2,8 +2,10 @@ import { get, set } from 'idb-keyval';
 
 const KEY = 'library';
 
-// { playlists: [{ id, name, songIds }], songs: { [id]: song } }
-export const lib = $state({ playlists: [], songs: {}, loaded: false });
+// { playlists: [{ id, name, songIds, presetId?, missing? }],
+//   songs: { [id]: song },            song.art = { cover, album } | null
+//   artists: { [artistKey]: photoUrl | null } }
+export const lib = $state({ playlists: [], songs: {}, artists: {}, loaded: false });
 
 export async function load() {
   try {
@@ -11,6 +13,7 @@ export async function load() {
     if (data) {
       lib.playlists = data.playlists ?? [];
       lib.songs = data.songs ?? {};
+      lib.artists = data.artists ?? {};
     }
   } finally {
     lib.loaded = true;
@@ -19,9 +22,31 @@ export async function load() {
   navigator.storage?.persist?.().catch(() => {});
 }
 
+// Writes are coalesced: artwork lookups update dozens of songs in a burst.
+let saveTimer;
 function save() {
-  const { playlists, songs } = $state.snapshot(lib);
-  return set(KEY, { playlists, songs });
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    const { playlists, songs, artists } = $state.snapshot(lib);
+    set(KEY, { playlists, songs, artists });
+  }, 150);
+}
+
+export const artistKey = (name) => (name ?? '').toLowerCase().replace(/^the\s+/, '').trim();
+
+export function setSongArt(id, art) {
+  const song = lib.songs[id];
+  if (!song) return;
+  song.art = art;
+  song.artChecked = true;
+  save();
+}
+
+export function setArtistPhoto(name, url, { overwrite = true } = {}) {
+  const key = artistKey(name);
+  if (!key || (!overwrite && lib.artists[key])) return;
+  lib.artists[key] = url;
+  save();
 }
 
 const uid = () => crypto.randomUUID();
@@ -101,8 +126,8 @@ function gc() {
 }
 
 export function exportLibrary() {
-  const { playlists, songs } = $state.snapshot(lib);
-  return JSON.stringify({ version: 1, playlists, songs }, null, 2);
+  const { playlists, songs, artists } = $state.snapshot(lib);
+  return JSON.stringify({ version: 1, playlists, songs, artists }, null, 2);
 }
 
 // Merge a backup in; playlists/songs with the same id are overwritten.
@@ -112,6 +137,7 @@ export function importLibrary(json) {
     throw new Error('不是有效的备份文件');
   }
   Object.assign(lib.songs, data.songs);
+  Object.assign(lib.artists, data.artists ?? {});
   for (const p of data.playlists) {
     const i = lib.playlists.findIndex((x) => x.id === p.id);
     if (i >= 0) lib.playlists[i] = p;

@@ -1,10 +1,16 @@
 <script>
-  import { tick } from 'svelte';
-  import { lib, createPlaylist, exportLibrary, importLibrary } from '../lib/store.svelte.js';
+  import { tick, onMount } from 'svelte';
+  import { lib, createPlaylist, exportLibrary, importLibrary, playlistById } from '../lib/store.svelte.js';
   import { importTracks } from '../lib/importer.js';
   import { coverStyle } from '../lib/color.js';
+  import { ensureArt, ensureArtistPhotos, artistPhoto } from '../lib/artwork.js';
+  import PlaylistCover from './PlaylistCover.svelte';
   import { presets } from '../presets.js';
   import Icon from './Icon.svelte';
+
+  onMount(() => {
+    ensureArtistPhotos(presets.map((p) => p.artist).filter(Boolean));
+  });
 
   let creating = $state(false);
   let name = $state('');
@@ -37,6 +43,7 @@
     presetJobs[preset.id] = { done: 0, total: preset.tracks.length };
     const failed = await importTracks(pid, preset.tracks, (done) => (presetJobs[preset.id].done = done));
     presetJobs[preset.id] = { failed: failed.map((t) => t.title) };
+    ensureArt(playlistById(pid)?.songIds ?? []);
   }
 
   async function doExport() {
@@ -98,9 +105,7 @@
         {#each lib.playlists as p (p.id)}
           <li>
             <a class="grow row-link" href="#/p/{p.id}">
-              <span class="cover" style="{coverStyle(p.name)} width:56px;height:56px">
-                <Icon name="music" size={22} />
-              </span>
+              <PlaylistCover playlist={p} size={56} />
               <span class="grow">
                 <span class="title ellipsis">{p.name}</span>
                 <span class="sub">{p.songIds.length} 首</span>
@@ -124,7 +129,9 @@
       {#each presets as preset (preset.id)}
         {@const job = presetJobs[preset.id]}
         {@const existing = lib.playlists.find((p) => p.presetId === preset.id)}
+        {@const photo = preset.artist && artistPhoto(preset.artist)}
         <div class="preset" style={coverStyle(preset.name)}>
+          {#if photo}<img class="preset-bg" src={photo} alt="" />{/if}
           <div class="preset-top">
             <Icon name="sparkle" size={18} />
             <span>{preset.tracks.length} 首</span>
@@ -258,15 +265,23 @@
     flex-direction: column;
     box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.15);
   }
+  .preset-bg {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    object-position: center 25%;
+  }
   .preset::after {
     /* darken the bottom so text stays readable on any hue */
     content: '';
     position: absolute;
     inset: 0;
-    background: linear-gradient(180deg, transparent 30%, rgba(0, 0, 0, 0.55));
+    background: linear-gradient(180deg, rgba(0, 0, 0, 0.1) 20%, rgba(0, 0, 0, 0.7));
     pointer-events: none;
   }
-  .preset > * {
+  .preset > :not(.preset-bg) {
     position: relative;
     z-index: 1;
   }
