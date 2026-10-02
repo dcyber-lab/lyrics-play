@@ -25,11 +25,38 @@ function loadImage(src, timeout = 6000) {
   });
 }
 
-function drawCover(ctx, img, x, y, w, h) {
+// object-fit: cover, with a vertical focus point (0 = top, 1 = bottom).
+function drawCover(ctx, img, x, y, w, h, fy = 0.5) {
   const s = Math.max(w / img.width, h / img.height);
   const sw = w / s;
   const sh = h / s;
-  ctx.drawImage(img, (img.width - sw) / 2, (img.height - sh) / 2, sw, sh, x, y, w, h);
+  ctx.drawImage(img, (img.width - sw) / 2, (img.height - sh) * fy, sw, sh, x, y, w, h);
+}
+
+// The user's own photo in a tilted instant-film frame, captioned.
+function drawPolaroid(ctx, img, fy, caption) {
+  const pw = 600;
+  const pad = 28;
+  const inner = pw - pad * 2;
+  const ph = pad + inner + 104;
+  ctx.save();
+  ctx.translate(CARD_W / 2, 150 + ph / 2);
+  ctx.rotate((-3.5 * Math.PI) / 180);
+  ctx.shadowColor = 'rgba(0,0,0,0.55)';
+  ctx.shadowBlur = 50;
+  ctx.shadowOffsetY = 24;
+  ctx.fillStyle = '#f6f4ef';
+  ctx.fillRect(-pw / 2, -ph / 2, pw, ph);
+  ctx.shadowColor = 'transparent';
+  drawCover(ctx, img, -pw / 2 + pad, -ph / 2 + pad, inner, inner, fy);
+  if (caption) {
+    ctx.fillStyle = '#3b3a38';
+    ctx.font = `600 36px ${FONT}`;
+    ctx.textAlign = 'center';
+    ctx.fillText(ellipsize(ctx, caption, inner), 0, ph / 2 - 40);
+    ctx.textAlign = 'left';
+  }
+  ctx.restore();
 }
 
 function ellipsize(ctx, text, max) {
@@ -52,7 +79,10 @@ const hueOf = (str = '') => [...str].reduce((h, c) => (h * 31 + c.codePointAt(0)
 /**
  * @param {HTMLCanvasElement} canvas
  * @param {{ title: string, eyebrow: string, subtitle?: string, hero?: string,
+ *           photo?: string, photoStyle?: 'hero' | 'polaroid', photoY?: number, caption?: string,
  *           songs: { title: string, artist?: string, cover?: string }[] }} card
+ *   photo: the user's own picture (a local blob URL), shown full-bleed as the
+ *   hero or in a polaroid frame over the artist photo.
  */
 export async function renderCard(canvas, card) {
   canvas.width = CARD_W;
@@ -61,8 +91,9 @@ export async function renderCard(canvas, card) {
   const songs = card.songs;
   const single = songs.length <= 12;
 
-  const [hero, ...covers] = await Promise.all([
+  const [hero, photo, ...covers] = await Promise.all([
     loadImage(card.hero),
+    loadImage(card.photo),
     ...(single ? songs.map((s) => loadImage(s.cover)) : []),
   ]);
 
@@ -70,7 +101,9 @@ export async function renderCard(canvas, card) {
   ctx.fillStyle = '#07070a';
   ctx.fillRect(0, 0, CARD_W, CARD_H);
   const HERO_H = 1180;
-  if (hero) drawCover(ctx, hero, 0, 0, CARD_W, HERO_H);
+  const fullPhoto = photo && card.photoStyle !== 'polaroid';
+  if (fullPhoto) drawCover(ctx, photo, 0, 0, CARD_W, HERO_H, card.photoY ?? 0.5);
+  else if (hero) drawCover(ctx, hero, 0, 0, CARD_W, HERO_H);
   else {
     const h = hueOf(card.title);
     const g = ctx.createRadialGradient(280, 300, 50, 400, 500, 1100);
@@ -91,6 +124,8 @@ export async function renderCard(canvas, card) {
   top.addColorStop(1, 'rgba(0,0,0,0)');
   ctx.fillStyle = top;
   ctx.fillRect(0, 0, CARD_W, 220);
+
+  if (photo && card.photoStyle === 'polaroid') drawPolaroid(ctx, photo, card.photoY ?? 0.5, card.caption);
 
   const L = 72;
   const MAXW = CARD_W - L * 2;

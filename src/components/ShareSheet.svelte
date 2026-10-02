@@ -1,5 +1,5 @@
 <script>
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import qrcode from 'qrcode-generator';
   import { lib, playedOn, updatePlaylist, today } from '../lib/store.svelte.js';
   import { playlistPayload, encodePayload, shareUrl } from '../lib/share.js';
@@ -51,6 +51,23 @@
   const played = $derived(playedOn(playlist.id, date));
   let onlyPlayed = $state(true);
   let canvas = $state();
+
+  // Your own photo on the card: picked/taken here, kept in memory only.
+  let photoUrl = $state(null);
+  let photoStyle = $state('hero'); // 'hero' | 'polaroid'
+  let photoY = $state(0.4);
+  function pickPhoto(e) {
+    const file = e.currentTarget.files?.[0];
+    e.currentTarget.value = '';
+    if (!file) return;
+    if (photoUrl) URL.revokeObjectURL(photoUrl);
+    photoUrl = URL.createObjectURL(file);
+  }
+  function dropPhoto() {
+    URL.revokeObjectURL(photoUrl);
+    photoUrl = null;
+  }
+  onDestroy(() => photoUrl && URL.revokeObjectURL(photoUrl));
   let rendering = $state(false);
   let saving = $state(false);
 
@@ -66,6 +83,10 @@
       eyebrow: `Live · ${date.replace(/-/g, '.')}`,
       subtitle: venue.trim(),
       hero: heroFor(),
+      photo: photoUrl,
+      photoStyle,
+      photoY,
+      caption: date.replace(/-/g, '.'), // venue is already in the title block
       songs: cardSongs.map((s) => ({ title: s.title, artist: s.artist, cover: s.art?.cover })),
     };
     clearTimeout(renderTimer);
@@ -126,6 +147,26 @@
         <input bind:value={venue} placeholder="场馆 / 城市（可选）" />
         <input type="date" bind:value={date} />
       </div>
+      {#if photoUrl}
+        <div class="photo-row">
+          <img class="thumb" src={photoUrl} alt="" />
+          <div class="segmented mini">
+            <button class:on={photoStyle === 'hero'} onclick={() => (photoStyle = 'hero')}>全幅</button>
+            <button class:on={photoStyle === 'polaroid'} onclick={() => (photoStyle = 'polaroid')}>拍立得</button>
+          </div>
+          <button class="icon-btn filled" onclick={dropPhoto} aria-label="去掉照片"><Icon name="x" size={16} /></button>
+        </div>
+        <label class="slider">
+          <span>上</span>
+          <input type="range" min="0" max="1" step="0.01" bind:value={photoY} aria-label="照片位置" />
+          <span>下</span>
+        </label>
+      {:else}
+        <label class="btn photo-btn">
+          <Icon name="camera" size={18} />拍一张 / 选一张自己的照片
+          <input type="file" accept="image/*" onchange={pickPhoto} hidden />
+        </label>
+      {/if}
       {#if played.length}
         <label class="toggle">
           <input type="checkbox" bind:checked={onlyPlayed} />
@@ -258,6 +299,38 @@
   .fields input[type='date'] {
     width: auto;
     flex: none;
+  }
+  .photo-btn {
+    width: 100%;
+    background: var(--accent-soft);
+    color: var(--accent);
+  }
+  .photo-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .thumb {
+    width: 44px;
+    height: 44px;
+    border-radius: 10px;
+    object-fit: cover;
+  }
+  .segmented.mini button {
+    height: 30px;
+  }
+  .slider {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 13px;
+    color: var(--dim);
+  }
+  .slider input {
+    flex: 1;
+    padding: 0;
+    background: none;
+    accent-color: var(--accent);
   }
   .toggle {
     display: flex;
