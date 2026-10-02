@@ -124,7 +124,7 @@
     try {
       await startCamera(facing);
       if (!view.stage) enterStage();
-      say('相机已开 · 从控制中心点「屏幕录制」就能录下来', 3500);
+      say(`相机已开${view.spec ? `（${view.spec}）` : ''} · 从控制中心点「屏幕录制」录下来`, 3500);
     } catch (err) {
       say(err.name === 'NotAllowedError' ? '没有相机权限：设置 → Safari → 相机' : `相机打不开：${err.message}`, 3500);
     } finally {
@@ -334,6 +334,9 @@
       >
         <Icon name={view.camera ? 'camera-off' : 'camera'} size={18} />
       </button>
+      {#if view.camera && view.spec}
+        <span class="spec">{view.spec}</span>
+      {/if}
       {#if view.camera}
         <button
           class="icon-btn glass"
@@ -709,6 +712,14 @@
   }
   .stage-bar.idle {
     opacity: 0.25;
+  }
+  .spec {
+    align-self: center;
+    padding: 0 6px;
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--dim);
+    font-variant-numeric: tabular-nums;
   }
   /* nothing on screen but video + lyrics while the screen recorder runs */
   .camera .stage-bar.idle {
