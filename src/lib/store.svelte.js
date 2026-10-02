@@ -50,7 +50,8 @@ export function deletePlaylist(id) {
   save();
 }
 
-export function addSong(pid, song) {
+// `at` inserts at a position (clamped); default appends.
+export function addSong(pid, song, at) {
   const p = playlistById(pid);
   if (!p) return;
   let id =
@@ -60,7 +61,22 @@ export function addSong(pid, song) {
     id = uid();
     lib.songs[id] = { ...song, id };
   }
-  p.songIds.push(id);
+  if (at == null) p.songIds.push(id);
+  else p.songIds.splice(Math.min(at, p.songIds.length), 0, id);
+  save();
+}
+
+// Tracks an import couldn't find, kept on the playlist so they can be
+// retried or searched by hand later: [{ title, artist?, duration?, query?, at }]
+export function addMissing(pid, tracks) {
+  const p = playlistById(pid);
+  if (!p || !tracks.length) return;
+  p.missing = [...(p.missing ?? []), ...tracks];
+  save();
+}
+
+export function dropMissing(pid, i) {
+  playlistById(pid)?.missing?.splice(i, 1);
   save();
 }
 
