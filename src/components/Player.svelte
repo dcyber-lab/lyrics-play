@@ -74,18 +74,41 @@
   let holdTimer;
   let idleTimer;
 
+  // Refresh on demand instead of polling: wake exactly when the next line is
+  // due, otherwise once a second for the clock and progress bar, and not at
+  // all while paused. Only the camera karaoke fill needs a fast tick.
+  const SLOW_TICK = 1000;
+  const KARAOKE_TICK = 100;
+  let tickTimer;
+
   function sync() {
     pos = clock.position;
     running = clock.running;
     rate = clock.rate;
+    clearTimeout(tickTimer);
+    if (!clock.running) return;
+    let delay = SLOW_TICK;
+    if (view.camera) delay = KARAOKE_TICK;
+    else {
+      const next = lines[activeIndex(lines, pos) + 1];
+      if (next) delay = Math.min(delay, ((next.t - pos) / clock.rate) * 1000 + 15);
+    }
+    tickTimer = setTimeout(sync, Math.max(16, delay));
+  }
+
+  // Timers are frozen while the app is in the background; catch up on return.
+  function onVisibility() {
+    if (document.visibilityState === 'visible') sync();
   }
 
   onMount(() => {
     if (song && !song.artChecked) ensureArt([song.id]);
-    const t = setInterval(sync, 100);
+    sync();
+    document.addEventListener('visibilitychange', onVisibility);
     centerOn(0, false);
     return () => {
-      clearInterval(t);
+      clearTimeout(tickTimer);
+      document.removeEventListener('visibilitychange', onVisibility);
       clearTimeout(manualTimer);
       clearTimeout(toastTimer);
       clearTimeout(holdTimer);
@@ -149,6 +172,7 @@
     try {
       await startCamera(facing);
       if (!view.stage) enterStage();
+      sync(); // switch to the fast karaoke tick
       say(`相机已开${view.spec ? `（${view.spec}）` : ''} · 从控制中心点「屏幕录制」录下来`, 3500);
     } catch (err) {
       say(err.name === 'NotAllowedError' ? '没有相机权限：设置 → Safari → 相机' : `相机打不开：${err.message}`, 3500);
@@ -505,13 +529,9 @@
       radial-gradient(45% 40% at 85% 70%, hsl(calc(var(--h) + 60) 80% 45% / 0.35), transparent 70%),
       radial-gradient(50% 40% at 30% 100%, hsl(calc(var(--h) + 180) 70% 40% / 0.25), transparent 70%);
     filter: blur(40px);
-    animation: drift 24s ease-in-out infinite alternate;
+    /* static on purpose: a never-ending animation keeps the GPU busy and stops
+       ProMotion screens from dropping their refresh rate */
     pointer-events: none;
-  }
-  @keyframes drift {
-    to {
-      transform: translate3d(4%, -3%, 0) scale(1.08);
-    }
   }
   .ambient.dim {
     opacity: 0.35;
@@ -522,7 +542,6 @@
     background-size: cover;
     background-position: center;
     filter: blur(48px) saturate(1.5) brightness(0.42);
-    animation: drift 30s ease-in-out infinite alternate;
     pointer-events: none;
   }
   .stage .art-bg {
@@ -583,7 +602,7 @@
     height: 100%;
     background: rgba(255, 255, 255, 0.7);
     transform-origin: left;
-    transition: transform 0.1s linear;
+    transition: transform 1s linear; /* matches the 1s refresh */
   }
 
   .lyrics {
