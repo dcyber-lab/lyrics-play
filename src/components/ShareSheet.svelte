@@ -4,7 +4,7 @@
   import { lib, playedOn, updatePlaylist, today } from '../lib/store.svelte.js';
   import { playlistPayload, encodePayload, shareUrl } from '../lib/share.js';
   import { renderCard, canvasToFile, saveFile } from '../lib/card.js';
-  import { playlistArt, primaryArtist, artistPhoto } from '../lib/artwork.js';
+  import { primaryArtist, artistPhoto } from '../lib/artwork.js';
   import Icon from './Icon.svelte';
 
   let { playlist, onclose } = $props();
@@ -54,7 +54,6 @@
 
   // Your own photo on the card: picked/taken here, kept in memory only.
   let photoUrl = $state(null);
-  let photoStyle = $state('hero'); // 'hero' | 'polaroid'
   let photoY = $state(0.4);
   function pickPhoto(e) {
     const file = e.currentTarget.files?.[0];
@@ -82,9 +81,9 @@
       title: playlist.name,
       eyebrow: `Live · ${date.replace(/-/g, '.')}`,
       subtitle: venue.trim(),
-      hero: heroFor(),
+      hero: heroOpt?.url ?? null,
+      heroMosaic: heroOpt?.mosaic ?? null,
       photo: photoUrl,
-      photoStyle,
       photoY,
       caption: date.replace(/-/g, '.'), // venue is already in the title block
       songs: cardSongs.map((s) => ({ title: s.title, artist: s.artist, cover: s.art?.cover })),
@@ -97,12 +96,27 @@
     }, 250);
   });
 
-  function heroFor() {
-    const art = playlistArt(playlist.songIds);
-    if (art.photo) return art.photo;
-    const first = songs[0];
-    return (first && artistPhoto(primaryArtist(first.artist))) ?? first?.art?.cover ?? null;
-  }
+  // Background choices: each act's photo (most songs first), every distinct
+  // album cover, and a cover mosaic.
+  const heroOptions = $derived.by(() => {
+    const counts = new Map();
+    const covers = [];
+    for (const s of songs) {
+      const a = primaryArtist(s.artist);
+      if (a) counts.set(a, (counts.get(a) ?? 0) + 1);
+      if (s.art?.cover && !covers.includes(s.art.cover)) covers.push(s.art.cover);
+    }
+    const opts = [];
+    for (const [name] of [...counts].sort((x, y) => y[1] - x[1])) {
+      const url = artistPhoto(name);
+      if (url && !opts.some((o) => o.url === url)) opts.push({ key: `a:${url}`, url, label: name });
+    }
+    if (covers.length >= 4) opts.push({ key: 'mosaic', mosaic: covers.slice(0, covers.length >= 9 ? 9 : 4), label: '封面拼贴' });
+    for (const url of covers) opts.push({ key: `c:${url}`, url });
+    return opts;
+  });
+  let heroKey = $state(null);
+  const heroOpt = $derived(heroOptions.find((o) => o.key === heroKey) ?? heroOptions[0]);
 
   async function saveCard() {
     saving = true;
@@ -147,13 +161,24 @@
         <input bind:value={venue} placeholder="场馆 / 城市（可选）" />
         <input type="date" bind:value={date} />
       </div>
+      {#if heroOptions.length > 1}
+        <div class="bg-label">背景</div>
+        <div class="bg-strip">
+          {#each heroOptions as o (o.key)}
+            <button class="bg" class:on={o.key === heroOpt?.key} onclick={() => (heroKey = o.key)} aria-label={o.label ?? '专辑封面'}>
+              {#if o.mosaic}
+                <span class="bg-mosaic">{#each o.mosaic.slice(0, 4) as u}<img src={u} alt="" />{/each}</span>
+              {:else}
+                <img src={o.url} alt="" />
+              {/if}
+            </button>
+          {/each}
+        </div>
+      {/if}
       {#if photoUrl}
         <div class="photo-row">
           <img class="thumb" src={photoUrl} alt="" />
-          <div class="segmented mini">
-            <button class:on={photoStyle === 'hero'} onclick={() => (photoStyle = 'hero')}>全幅</button>
-            <button class:on={photoStyle === 'polaroid'} onclick={() => (photoStyle = 'polaroid')}>拍立得</button>
-          </div>
+          <span class="photo-note">你的照片会放在右下角，不挡歌手和封面</span>
           <button class="icon-btn filled" onclick={dropPhoto} aria-label="去掉照片"><Icon name="x" size={16} /></button>
         </div>
         <label class="slider">
@@ -163,7 +188,7 @@
         </label>
       {:else}
         <label class="btn photo-btn">
-          <Icon name="camera" size={18} />拍一张 / 选一张自己的照片
+          <Icon name="camera" size={18} />加一张自己的照片
           <input type="file" accept="image/*" onchange={pickPhoto} hidden />
         </label>
       {/if}
@@ -300,6 +325,50 @@
     width: auto;
     flex: none;
   }
+  .bg-label {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--dim);
+    margin-bottom: -4px;
+  }
+  .bg-strip {
+    display: flex;
+    gap: 10px;
+    overflow-x: auto;
+    padding: 4px 2px;
+    margin: 0 -2px;
+    scrollbar-width: none;
+  }
+  .bg-strip::-webkit-scrollbar {
+    display: none;
+  }
+  .bg {
+    flex: none;
+    width: 56px;
+    height: 56px;
+    padding: 0;
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: 0 0 0 2px transparent;
+    transition: box-shadow 0.15s;
+  }
+  .bg.on {
+    box-shadow:
+      0 0 0 2px #141418,
+      0 0 0 4px var(--accent);
+  }
+  .bg img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+  .bg-mosaic {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    width: 100%;
+    height: 100%;
+  }
   .photo-btn {
     width: 100%;
     background: var(--accent-soft);
@@ -316,8 +385,10 @@
     border-radius: 10px;
     object-fit: cover;
   }
-  .segmented.mini button {
-    height: 30px;
+  .photo-note {
+    flex: 1;
+    font-size: 13px;
+    color: var(--dim);
   }
   .slider {
     display: flex;
