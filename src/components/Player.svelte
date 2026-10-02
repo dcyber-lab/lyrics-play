@@ -1,11 +1,12 @@
 <script>
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { lib, playlistById } from '../lib/store.svelte.js';
   import { songTimeline } from '../lib/lrc.js';
   import { SyncClock, activeIndex, MIN_RATE, MAX_RATE } from '../lib/clock.js';
   import { wakeLock } from '../lib/wakelock.svelte.js';
   import { hueOf } from '../lib/color.js';
   import { ensureArt } from '../lib/artwork.js';
+  import { view, cameraStream, startCamera, stopCamera } from '../lib/session.svelte.js';
   import Icon from './Icon.svelte';
   import Cover from './Cover.svelte';
 
@@ -29,7 +30,6 @@
   let running = $state(false);
   let rate = $state(1);
   let locked = $state(false);
-  let stage = $state(false); // 演出模式: lyrics only, chrome hidden
   let stageIdle = $state(false);
   let holding = $state(false);
   let tuning = $state(false);
@@ -72,7 +72,7 @@
   function centerOn(i, smooth = true) {
     const el = lineEls[Math.max(i, 0)];
     if (!el || !scroller) return;
-    const top = el.offsetTop - scroller.clientHeight * 0.36 + el.offsetHeight / 2;
+    const top = el.offsetTop - scroller.clientHeight * (view.camera ? 0.66 : 0.36) + el.offsetHeight / 2;
     scroller.scrollTo({ top, behavior: smooth ? 'smooth' : 'auto' });
   }
 
@@ -91,10 +91,45 @@
     manualTimer = setTimeout(() => (manual = false), MANUAL_SCROLL_HOLD);
   }
 
-  function say(msg) {
+  function say(msg, ms = 1600) {
     toast = msg;
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => (toast = ''), 1600);
+    toastTimer = setTimeout(() => (toast = ''), ms);
+  }
+
+  // Camera mode (live video behind the lyrics, for the iOS screen recorder).
+  let videoEl = $state();
+  let cameraBusy = $state(false);
+
+  $effect(() => {
+    // (re)attach after a song change re-creates the <video>
+    if (view.camera && videoEl && videoEl.srcObject !== cameraStream()) {
+      videoEl.srcObject = cameraStream();
+      videoEl.play().catch(() => {});
+    }
+  });
+
+  // The focus line sits lower over video, like subtitles.
+  $effect(() => {
+    view.camera;
+    tick().then(() => centerOn(active, false));
+  });
+
+  async function toggleCamera(facing = view.facing) {
+    if (view.camera && facing === view.facing) {
+      stopCamera();
+      return;
+    }
+    cameraBusy = true;
+    try {
+      await startCamera(facing);
+      if (!view.stage) enterStage();
+      say('相机已开 · 从控制中心点「屏幕录制」就能录下来', 3500);
+    } catch (err) {
+      say(err.name === 'NotAllowedError' ? '没有相机权限：设置 → Safari → 相机' : `相机打不开：${err.message}`, 3500);
+    } finally {
+      cameraBusy = false;
+    }
   }
 
   function tapLine(i) {
@@ -113,14 +148,15 @@
   // app is already full screen); elsewhere we ask for real fullscreen too.
   function enterStage() {
     wakeLock.enable();
-    stage = true;
+    view.stage = true;
     tuning = false;
     poke();
     document.documentElement.requestFullscreen?.().catch(() => {});
     say('演出模式 · 点歌词照样能校准');
   }
   function exitStage() {
-    stage = false;
+    view.stage = false;
+    stopCamera();
     if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
   }
   // Stage controls fade out when untouched for a bit.
@@ -197,7 +233,19 @@
 
 <!-- touch/mouse only wake the faded stage controls -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="player" class:stage style="--h: {hue}" ontouchstart={stage ? poke : undefined} onmousemove={stage ? poke : undefined}>
+<div
+  class="player"
+  class:stage={view.stage}
+  class:camera={view.camera}
+  style="--h: {hue}"
+  ontouchstart={view.stage ? poke : undefined}
+  onmousemove={view.stage ? poke : undefined}
+>
+  {#if view.camera}
+    <!-- svelte-ignore a11y_media_has_caption -->
+    <video class="cam" class:mirror={view.facing === 'user'} bind:this={videoEl} autoplay playsinline muted></video>
+    <div class="cam-scrim" aria-hidden="true"></div>
+  {/if}
   <div class="ambient" class:dim={song?.art?.cover} aria-hidden="true"></div>
   {#if song?.art?.cover}
     <!-- blurred album art as the backdrop, Apple Music style -->
@@ -217,6 +265,7 @@
       </div>
     </div>
     <div class="actions">
+      <button class="icon-btn glass" onclick={() => toggleCamera()} aria-label="相机模式"><Icon name="camera" size={18} /></button>
       <button class="icon-btn glass" onclick={enterStage} aria-label="演出模式"><Icon name="expand" size={18} /></button>
       <button class="icon-btn glass" onclick={lock} aria-label="锁屏防误触"><Icon name="lock" size={18} /></button>
     </div>
@@ -271,11 +320,30 @@
     </button>
   {/if}
 
-  {#if stage && !locked}
+  {#if view.stage && !locked}
     <div class="stage-bar" class:idle={stageIdle}>
       <button class="icon-btn glass" onclick={toggle} aria-label={running ? '暂停' : '播放'}>
         <Icon name={running ? 'pause' : 'play'} size={18} />
       </button>
+      <button
+        class="icon-btn glass"
+        class:on={view.camera}
+        onclick={() => toggleCamera()}
+        disabled={cameraBusy}
+        aria-label={view.camera ? '关闭相机' : '打开相机'}
+      >
+        <Icon name={view.camera ? 'camera-off' : 'camera'} size={18} />
+      </button>
+      {#if view.camera}
+        <button
+          class="icon-btn glass"
+          onclick={() => toggleCamera(view.facing === 'user' ? 'environment' : 'user')}
+          disabled={cameraBusy}
+          aria-label="切换前后摄像头"
+        >
+          <Icon name="flip" size={18} />
+        </button>
+      {/if}
       <button class="icon-btn glass" onclick={lock} aria-label="锁屏防误触"><Icon name="lock" size={18} /></button>
       <button class="icon-btn glass" onclick={exitStage} aria-label="退出演出模式"><Icon name="shrink" size={18} /></button>
     </div>
@@ -641,6 +709,56 @@
   }
   .stage-bar.idle {
     opacity: 0.25;
+  }
+  /* nothing on screen but video + lyrics while the screen recorder runs */
+  .camera .stage-bar.idle {
+    opacity: 0;
+  }
+
+  /* Camera mode: live video as the backdrop, lyrics as lower-third subtitles. */
+  .cam {
+    position: absolute !important;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    background: #000;
+  }
+  .cam.mirror {
+    transform: scaleX(-1);
+  }
+  .cam-scrim {
+    position: absolute !important;
+    inset: 0;
+    background: linear-gradient(180deg, rgba(0, 0, 0, 0.15) 0%, transparent 35%, rgba(0, 0, 0, 0.55) 100%);
+    pointer-events: none;
+  }
+  .camera .ambient,
+  .camera .art-bg {
+    display: none;
+  }
+  .camera .lyrics {
+    -webkit-mask-image: linear-gradient(180deg, transparent 0, transparent 42%, #000 56%, #000 88%, transparent 100%);
+    mask-image: linear-gradient(180deg, transparent 0, transparent 42%, #000 56%, #000 88%, transparent 100%);
+  }
+  .camera .lyrics::before {
+    height: 66vh;
+  }
+  .camera .line {
+    font-size: clamp(26px, 7.6vw, 38px);
+    color: rgba(255, 255, 255, 0.6);
+    text-shadow: 0 2px 14px rgba(0, 0, 0, 0.75);
+    filter: none;
+  }
+  .camera .line.active {
+    color: #fff;
+    text-shadow:
+      0 2px 18px rgba(0, 0, 0, 0.8),
+      0 0 2px rgba(0, 0, 0, 0.6);
+  }
+  .camera .line.past,
+  .camera .line.far {
+    opacity: 0;
   }
 
   .shield {
