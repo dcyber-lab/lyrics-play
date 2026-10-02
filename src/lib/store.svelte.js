@@ -23,16 +23,62 @@ export async function load() {
 }
 
 // Writes are coalesced: artwork lookups update dozens of songs in a burst.
-let saveTimer;
+// A pending write is flushed right away if the app is backgrounded or closed.
+let saveTimer = null;
+function flush() {
+  if (saveTimer === null) return;
+  clearTimeout(saveTimer);
+  saveTimer = null;
+  const { playlists, songs, artists } = $state.snapshot(lib);
+  return set(KEY, { playlists, songs, artists });
+}
 function save() {
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => {
-    const { playlists, songs, artists } = $state.snapshot(lib);
-    set(KEY, { playlists, songs, artists });
-  }, 150);
+  saveTimer = setTimeout(flush, 150);
+}
+if (typeof window !== 'undefined') {
+  addEventListener('pagehide', flush);
+  document.addEventListener('visibilitychange', () => document.visibilityState === 'hidden' && flush());
 }
 
 export const artistKey = (name) => (name ?? '').toLowerCase().replace(/^the\s+/, '').trim();
+
+// Replace a song's lyrics with a freshly tapped-out LRC.
+export function setSongLyrics(id, lrc) {
+  const song = lib.songs[id];
+  if (!song) return;
+  song.lyrics = lrc;
+  song.synced = true;
+  song.tapped = true;
+  save();
+}
+
+export const today = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+
+// Remember which songs actually got played tonight (for the share card).
+export function markPlayed(pid, songId) {
+  const p = playlistById(pid);
+  if (!p) return;
+  const date = today();
+  // Assign, then read back through the proxy: `x ??= []` evaluates to the raw
+  // array, and pushing to that bypasses Svelte's state (the first song of the
+  // night used to get lost that way).
+  if (!p.played) p.played = {};
+  if (!p.played[date]) p.played[date] = [];
+  const list = p.played[date];
+  if (list.includes(songId)) return;
+  list.push(songId);
+  // keep the last few shows only
+  for (const d of Object.keys(p.played).sort().slice(0, -8)) delete p.played[d];
+  save();
+}
+
+export function playedOn(pid, date = today()) {
+  return playlistById(pid)?.played?.[date] ?? [];
+}
 
 export function setSongArt(id, art) {
   const song = lib.songs[id];
@@ -66,6 +112,13 @@ export function renamePlaylist(id, name) {
   const p = playlistById(id);
   if (!p || !name.trim()) return;
   p.name = name.trim();
+  save();
+}
+
+export function updatePlaylist(id, patch) {
+  const p = playlistById(id);
+  if (!p) return;
+  Object.assign(p, patch);
   save();
 }
 

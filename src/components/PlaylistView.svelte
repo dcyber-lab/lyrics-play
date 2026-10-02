@@ -17,6 +17,7 @@
   import AddSongs from './AddSongs.svelte';
   import Cover from './Cover.svelte';
   import PlaylistCover from './PlaylistCover.svelte';
+  import ShareSheet from './ShareSheet.svelte';
   import Icon from './Icon.svelte';
 
   let { id } = $props();
@@ -58,6 +59,7 @@
   });
 
   let editing = $state(false);
+  let sharing = $state(false);
   let retrying = $state(new Set());
   let filling = $state(null); // { done, total }
   let target = $state(null); // search pre-fill for AddSongs: { query, at, missingIndex }
@@ -125,11 +127,20 @@
     <div class="nav">
       <a class="icon-btn" href="#/" aria-label="返回"><Icon name="back" /></a>
       {#if songs.length}
-        <button class="btn small" class:primary={editing} onclick={() => (editing = !editing)}>
-          {editing ? '完成' : '编辑'}
-        </button>
+        <div class="nav-actions">
+          {#if !editing}
+            <button class="icon-btn filled" onclick={() => (sharing = true)} aria-label="分享"><Icon name="share" size={19} /></button>
+          {/if}
+          <button class="btn small" class:primary={editing} onclick={() => (editing = !editing)}>
+            {editing ? '完成' : '编辑'}
+          </button>
+        </div>
       {/if}
     </div>
+
+    {#if sharing}
+      <ShareSheet {playlist} onclose={() => (sharing = false)} />
+    {/if}
 
     <header class="hero">
       <div class="hero-cover"><PlaylistCover {playlist} size={112} radius={18} /></div>
@@ -173,6 +184,7 @@
               </div>
               <button class="icon-btn" disabled={i === 0} onclick={() => moveSong(id, i, -1)} aria-label="上移"><Icon name="up" size={20} /></button>
               <button class="icon-btn" disabled={i === songs.length - 1} onclick={() => moveSong(id, i, 1)} aria-label="下移"><Icon name="down" size={20} /></button>
+              <a class="icon-btn" class:warn={!song.synced} href="#/sync/{id}/{i}" aria-label="打轴"><Icon name="timer" size={20} /></a>
               <button class="icon-btn danger" onclick={() => removeSong(id, i)} aria-label="移除"><Icon name="x" size={20} /></button>
             {:else}
               <a class="grow song-link" href="#/play/{id}/{i}">
@@ -243,6 +255,11 @@
 </div>
 
 <style>
+  .nav-actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
   .hero {
     display: flex;
     align-items: flex-end;
@@ -328,6 +345,9 @@
   }
   .dot {
     color: var(--faint);
+  }
+  .icon-btn.warn {
+    color: var(--warn);
   }
   .icon-btn.danger {
     color: var(--danger);
