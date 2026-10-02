@@ -37,6 +37,31 @@
   let tapped = $state(-1);
 
   const active = $derived(activeIndex(lines, pos));
+  // How far through the active line we are (0..1), for the karaoke fill.
+  // A line is "sung" over the gap to the next one, capped by a rough
+  // per-word estimate so a long instrumental gap doesn't stretch it.
+  const lineProgress = $derived.by(() => {
+    if (active < 0) return 0;
+    const t0 = lines[active].t;
+    const gap = (lines[active + 1]?.t ?? t0 + 5) - t0;
+    const words = (lines[active].text || '').split(/\s+/).filter(Boolean).length;
+    const dur = Math.max(0.8, Math.min(gap * 0.92, 1 + words * 0.42));
+    return Math.min(1, Math.max(0, (pos - t0) / dur));
+  });
+  // Split the active line into words that fill one after another, so a line
+  // that wraps fills in reading order instead of both rows at once.
+  const activeWords = $derived.by(() => {
+    const text = active >= 0 ? lines[active].text : '';
+    if (!text) return [];
+    const words = text.split(/\s+/).filter(Boolean);
+    const total = words.reduce((n, w) => n + w.length, 0);
+    let filled = lineProgress * total;
+    return words.map((w, i) => {
+      const fill = Math.min(1, Math.max(0, filled / w.length));
+      filled -= w.length;
+      return { text: i < words.length - 1 ? `${w} ` : w, fill };
+    });
+  });
   const intro = $derived(lines.length && pos < lines[0].t ? Math.ceil(lines[0].t - pos) : 0);
   const ended = $derived(lines.length > 0 && pos > lastT + 6);
   const progress = $derived(lastT ? Math.min(1, pos / (lastT + 4)) : 0);
@@ -235,6 +260,7 @@
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
   class="player"
+  onscroll={(e) => (e.currentTarget.scrollTop = 0)}
   class:stage={view.stage}
   class:camera={view.camera}
   style="--h: {hue}"
@@ -245,6 +271,16 @@
     <!-- svelte-ignore a11y_media_has_caption -->
     <video class="cam" class:mirror={view.facing === 'user'} bind:this={videoEl} autoplay playsinline muted></video>
     <div class="cam-scrim" aria-hidden="true"></div>
+    {#if song}
+      <!-- "now playing" sticker, ends up in the recording on purpose -->
+      <div class="sticker" aria-hidden="true">
+        <Cover src={song.art?.cover} seed={song.title} size={40} radius={8} />
+        <div class="st-text">
+          <div class="st-title ellipsis">{song.title}</div>
+          <div class="st-artist ellipsis">{song.artist}</div>
+        </div>
+      </div>
+    {/if}
   {/if}
   <div class="ambient" class:dim={song?.art?.cover} aria-hidden="true"></div>
   {#if song?.art?.cover}
@@ -298,7 +334,13 @@
         class:tapped={i === tapped}
         onclick={() => tapLine(i)}
       >
-        {line.text || '♪'}
+        <span class="txt">
+          {#if d === 0 && view.camera && activeWords.length}
+            {#each activeWords as w}<span class="w" style="--w: {w.fill}">{w.text}</span>{/each}
+          {:else}
+            {line.text || '♪'}
+          {/if}
+        </span>
       </button>
     {:else}
       <p class="empty">这首歌没有歌词</p>
@@ -445,6 +487,9 @@
     flex-direction: column;
     background: var(--bg);
     overflow: hidden;
+    /* clip, unlike hidden, can't be scrolled by focusing a line button,
+       which used to shift the whole player up a few dozen pixels */
+    overflow: clip;
     -webkit-user-select: none;
     user-select: none;
   }
@@ -755,21 +800,91 @@
   .camera .lyrics::before {
     height: 66vh;
   }
+  /* Camera lyrics: centred subtitles with a karaoke fill on the sung line. */
   .camera .line {
-    font-size: clamp(26px, 7.6vw, 38px);
-    color: rgba(255, 255, 255, 0.6);
-    text-shadow: 0 2px 14px rgba(0, 0, 0, 0.75);
+    margin: 0 auto;
+    padding: 8px 4px;
+    text-align: center;
+    text-wrap: balance;
+    font-size: clamp(26px, 7.4vw, 38px);
+    line-height: 1.16;
+    color: rgba(255, 255, 255, 0.55);
+    text-shadow: 0 2px 12px rgba(0, 0, 0, 0.7);
     filter: none;
+    transition:
+      opacity 0.35s ease,
+      transform 0.35s ease,
+      color 0.35s ease;
+  }
+  .camera .line .txt {
+    display: inline-block;
+  }
+  .camera .line.soon {
+    transform: scale(0.8);
+    opacity: 0.85;
   }
   .camera .line.active {
-    color: #fff;
-    text-shadow:
-      0 2px 18px rgba(0, 0, 0, 0.8),
-      0 0 2px rgba(0, 0, 0, 0.6);
+    text-shadow: none;
+    /* text-shadow would bleed through the clipped fill; drop-shadow doesn't */
+    filter: drop-shadow(0 2px 10px rgba(0, 0, 0, 0.75)) drop-shadow(0 0 1px rgba(0, 0, 0, 0.5));
   }
-  .camera .line.past,
-  .camera .line.far {
+  .camera .line.active .txt {
+    animation: line-in 0.45s cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+  .camera .line.active .w {
+    background: linear-gradient(
+      90deg,
+      #fff calc(var(--w) * 115% - 15%),
+      rgba(255, 255, 255, 0.42) calc(var(--w) * 115%)
+    );
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    color: transparent;
+    transition: --w 0.12s linear;
+  }
+  @keyframes line-in {
+    from {
+      opacity: 0.4;
+      transform: translateY(10px) scale(0.96);
+    }
+  }
+  /* subtitles: only the sung line and the next one */
+  .camera .line:not(.active):not(.soon) {
     opacity: 0;
+  }
+  .camera .overlay {
+    top: calc(var(--safe-top) + 84px);
+  }
+
+  .sticker {
+    position: absolute !important;
+    top: calc(var(--safe-top) + 16px);
+    left: 16px;
+    max-width: 70%;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 14px 6px 6px;
+    border-radius: 14px;
+    background: rgba(0, 0, 0, 0.35);
+    -webkit-backdrop-filter: blur(16px) saturate(1.4);
+    backdrop-filter: blur(16px) saturate(1.4);
+    box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.15);
+    pointer-events: none;
+    z-index: 2;
+    animation: line-in 0.5s ease-out;
+  }
+  .st-text {
+    min-width: 0;
+  }
+  .st-title {
+    font-size: 14px;
+    font-weight: 700;
+  }
+  .st-artist {
+    font-size: 12px;
+    color: rgba(255, 255, 255, 0.7);
   }
 
   .shield {
