@@ -1,6 +1,6 @@
 <script>
   import { onMount, tick } from 'svelte';
-  import { lib, playlistById } from '../lib/store.svelte.js';
+  import { lib, playlistById, markPlayed } from '../lib/store.svelte.js';
   import { songTimeline } from '../lib/lrc.js';
   import { SyncClock, activeIndex, MIN_RATE, MAX_RATE } from '../lib/clock.js';
   import { wakeLock } from '../lib/wakelock.svelte.js';
@@ -161,6 +161,7 @@
     if (locked) return;
     wakeLock.enable(); // retry inside a user gesture, iOS likes that
     const learned = clock.tap(lines[i].t + TAP_LEAD);
+    if (song) markPlayed(pid, song.id);
     tapped = i;
     setTimeout(() => tapped === i && (tapped = -1), 450);
     manual = false;
@@ -218,6 +219,7 @@
 
   function toggle() {
     wakeLock.enable();
+    if (song && !clock.running) markPlayed(pid, song.id);
     clock.toggle();
     sync();
   }
@@ -297,7 +299,7 @@
       <div class="title ellipsis">{song?.title ?? '找不到这首歌'}</div>
       <div class="sub ellipsis">
         {song?.artist ?? ''}
-        {#if song && !timeline.synced}<span class="tag warn">估算时间轴</span>{/if}
+        {#if song && !timeline.synced}<a class="tag warn" href="#/sync/{pid}/{index}">估算 · 去打轴</a>{/if}
       </div>
     </div>
     <div class="actions">

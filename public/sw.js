@@ -1,6 +1,6 @@
 // Offline shell. Lyrics themselves live in IndexedDB, so all we need here is
 // the app: index.html, its hashed bundles, icons.
-const CACHE = 'lyrics-live-v3';
+const CACHE = 'lyrics-live-v4';
 // Album covers / artist photos. Kept across app versions; it's content, not code.
 const IMG_CACHE = 'lyrics-live-img';
 const IMG_HOSTS = /(^|\.)(dzcdn\.net|mzstatic\.com)$/;
@@ -66,6 +66,9 @@ async function networkFirst(req) {
 // for the cache, we just can't inspect them. Keyed by URL so a prefetch with
 // fetch(..., {mode: 'no-cors'}) and a later <img> share one entry.
 async function imageCacheFirst(req) {
+  // CORS requests (the share-card canvas) need a real CORS response; a cached
+  // opaque one would fail them, so those go straight to the network.
+  if (req.mode === 'cors') return fetch(req);
   const cache = await caches.open(IMG_CACHE);
   const hit = await cache.match(req.url);
   if (hit) return hit;
